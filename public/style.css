@@ -1,0 +1,38 @@
+body { font-size: 14px; }
+
+.navbar { border-bottom: 1px solid #333; }
+
+.card { background: #1e1e2e !important; }
+
+/* Stat cards: readable labels and values */
+#stat-cards .card { background: #262636 !important; }
+#stat-cards .text-muted { color: #9aa4b8 !important; }
+#stat-cards .fs-4 { color: #f1f3f8; }
+
+/* Chart card titles need readable contrast on the dark surface */
+.card-title.text-muted { color: #aab2c5 !important; }
+
+.table-dark { background: transparent; }
+.table-dark td, .table-dark th { border-color: #333; }
+
+canvas { display: block; }
+
+#controls input, #controls select {
+  background: #2a2a3a;
+  border: 1px solid #444;
+  color: #ccc;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.btn-outline-secondary.active {
+  background-color: #6c757d;
+  color: #fff;
+}
+
+.stat-badge {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 3px;
+}

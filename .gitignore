@@ -1,0 +1,13 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Generated SQLite database (rebuilt from weather_data.txt on server startup)
+weather.db
+weather.db-shm
+weather.db-wal
+
+# Local Claude Code settings (machine-specific permissions)
+.claude/settings.local.json
