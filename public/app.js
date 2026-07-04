@@ -87,6 +87,48 @@ function renderControls() {
   } else if (period === 'year') {
     el.appendChild(yearSelect());
     el.querySelector('select').addEventListener('change', load);
+
+  } else if (period === 'range') {
+    // Two date pickers populated ONLY from dates that exist in the data,
+    // so the user can never select a window outside the recorded range.
+    const dates = allDates.map(d => d.date);
+    const fromSel = document.createElement('select');
+    const toSel = document.createElement('select');
+    dates.forEach(d => {
+      const of = document.createElement('option'); of.value = d; of.textContent = d; fromSel.appendChild(of);
+      const ot = document.createElement('option'); ot.value = d; ot.textContent = d; toSel.appendChild(ot);
+    });
+    if (dates.length) {
+      toSel.value = dates[dates.length - 1];
+      // Default to the last ~30 available days for a sensible starting window.
+      fromSel.value = dates[Math.max(0, dates.length - 30)];
+    }
+    fromSel.addEventListener('change', load);
+    toSel.addEventListener('change', load);
+    const fromLbl = document.createElement('span'); fromLbl.className = 'text-muted small'; fromLbl.textContent = 'From';
+    const toLbl = document.createElement('span'); toLbl.className = 'text-muted small'; toLbl.textContent = 'To';
+
+    // "All" checkbox — when checked, span the entire dataset and disable the
+    // From/To pickers since the window is no longer user-controlled.
+    const allWrap = document.createElement('label');
+    allWrap.className = 'text-muted small d-flex align-items-center gap-1 mb-0';
+    const allChk = document.createElement('input');
+    allChk.type = 'checkbox';
+    allChk.id = 'range-all';
+    allChk.className = 'form-check-input mt-0';
+    allWrap.appendChild(allChk);
+    allWrap.appendChild(document.createTextNode('All'));
+    allChk.addEventListener('change', () => {
+      fromSel.disabled = allChk.checked;
+      toSel.disabled = allChk.checked;
+      load();
+    });
+
+    el.appendChild(allWrap);
+    el.appendChild(fromLbl);
+    el.appendChild(fromSel);
+    el.appendChild(toLbl);
+    el.appendChild(toSel);
   }
 }
 
@@ -131,6 +173,16 @@ async function load() {
     url = `/api/week?year=${sels[0]?.value}&week=${sels[1]?.value}`;
   } else if (period === 'month') {
     url = `/api/month?year=${sels[0]?.value}&month=${sels[1]?.value}`;
+  } else if (period === 'range') {
+    let from, to;
+    if (document.getElementById('range-all')?.checked && allDates.length) {
+      from = allDates[0].date;                       // whole dataset
+      to = allDates[allDates.length - 1].date;
+    } else {
+      from = sels[0]?.value; to = sels[1]?.value;
+      if (from && to && from > to) [from, to] = [to, from]; // tolerate reversed picks
+    }
+    url = `/api/range?from=${from}&to=${to}`;
   } else {
     url = `/api/year?year=${sels[0]?.value}`;
   }
@@ -274,7 +326,9 @@ document.getElementById('btn-import').addEventListener('click', async () => {
   try {
     const r = await fetch('/api/import', { method: 'POST' });
     const j = await r.json();
-    btn.textContent = `✓ ${j.imported}`;
+    // Report what actually changed, not just the row count in the file.
+    btn.textContent = `✓ ${j.inserted} new · ${j.updated} upd`;
+    btn.title = `${j.total} rows processed — ${j.inserted} new, ${j.updated} updated, ${j.unchanged} unchanged`;
     // refresh dates and reload
     const resp = await fetch('/api/dates');
     allDates = await resp.json();

@@ -109,8 +109,8 @@ app.get('/api/range', (req, res) => {
 app.post('/api/import', (_req, res) => {
   try {
     const dataFile = path.join(process.cwd(), 'weather_data.txt');
-    const count = importFile(dataFile);
-    res.json({ ok: true, imported: count });
+    const result = importFile(dataFile);
+    res.json({ ok: true, ...result });
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
@@ -121,8 +121,11 @@ app.listen(PORT, () => {
   // Auto-import on startup so fresh data is always loaded
   try {
     const dataFile = path.join(process.cwd(), 'weather_data.txt');
-    const count = importFile(dataFile);
-    console.log(`Loaded ${count} records from weather_data.txt`);
+    const r = importFile(dataFile);
+    console.log(
+      `Loaded ${r.total} records from weather_data.txt ` +
+      `(${r.inserted} new, ${r.updated} updated, ${r.unchanged} unchanged)`,
+    );
   } catch (err) {
     console.warn('Could not auto-import weather_data.txt:', err);
   }

@@ -17,13 +17,24 @@ body { font-size: 14px; }
 
 canvas { display: block; }
 
-#controls input, #controls select {
+#controls input:not([type="checkbox"]), #controls select {
   background: #2a2a3a;
   border: 1px solid #444;
   color: #ccc;
   padding: 2px 8px;
   border-radius: 4px;
   font-size: 13px;
+}
+
+/* "All" range checkbox: unchecked is dark, checked turns red with a
+   visible white check mark (keep Bootstrap's check-mark background-image). */
+#controls input[type="checkbox"] {
+  background-color: #2a2a3a;
+  border: 1px solid #666;
+}
+#controls input[type="checkbox"]:checked {
+  background-color: #dc3545;
+  border-color: #dc3545;
 }
 
 .btn-outline-secondary.active {
