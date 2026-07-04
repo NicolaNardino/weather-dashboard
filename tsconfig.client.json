@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "ES2020",
+    "moduleResolution": "node",
+    "lib": ["ES2020", "DOM"],
+    "outDir": "./public",
+    "rootDir": "./src/client",
+    "types": [],
+    "noEmitOnError": true
+  },
+  "include": ["src/client/**/*"],
+  "exclude": ["node_modules"]
+}

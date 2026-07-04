@@ -2,10 +2,12 @@
   "name": "weather-dashboard",
   "version": "1.0.0",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && npm run build:client",
+    "build:client": "tsc -p tsconfig.client.json",
     "start": "node dist/server.js",
-    "dev": "ts-node src/server.ts",
-    "import": "ts-node src/import.ts"
+    "dev": "npm run build:client && ts-node src/server.ts",
+    "import": "ts-node src/import.ts",
+    "screenshot": "ts-node --transpile-only screenshot.ts"
   },
   "dependencies": {
     "express": "^4.18.3"

@@ -27,6 +27,18 @@ export function getDb(): DatabaseSync {
         value TEXT
       )
     `);
+    // Local cache of daily data fetched from the public weather service
+    // (Open-Meteo), keyed per location + date so the Compare view can be
+    // served without re-hitting the network (and works offline).
+    _db.exec(`
+      CREATE TABLE IF NOT EXISTS public_weather (
+        location   TEXT NOT NULL,
+        date       TEXT NOT NULL,
+        temp_high  REAL, temp_low REAL, wind_high REAL, precip REAL,
+        fetched_at TEXT,
+        PRIMARY KEY (location, date)
+      )
+    `);
   }
   return _db;
 }
@@ -93,6 +105,38 @@ export function queryWeek(year: number, week: number): WeatherRow[] {
 export function queryAllDates(): { date: string }[] {
   const db = getDb();
   return db.prepare('SELECT date FROM weather ORDER BY date').all() as unknown as { date: string }[];
+}
+
+// --- Public weather service cache (Open-Meteo) ---
+
+export interface PublicRow {
+  date: string;
+  temp_high: number | null;
+  temp_low: number | null;
+  wind_high: number | null;
+  precip: number | null;
+}
+
+export function queryPublicRange(location: string, from: string, to: string): PublicRow[] {
+  return getDb().prepare(
+    `SELECT date, temp_high, temp_low, wind_high, precip
+       FROM public_weather
+      WHERE location = ? AND date >= ? AND date <= ?
+      ORDER BY date`
+  ).all(location, from, to) as unknown as PublicRow[];
+}
+
+export function upsertPublic(location: string, rows: PublicRow[]): void {
+  const db = getDb();
+  const stmt = db.prepare(
+    `INSERT OR REPLACE INTO public_weather
+       (location, date, temp_high, temp_low, wind_high, precip, fetched_at)
+     VALUES (?,?,?,?,?,?,?)`
+  );
+  const now = new Date().toISOString();
+  for (const r of rows) {
+    stmt.run(location, r.date, r.temp_high, r.temp_low, r.wind_high, r.precip, now);
+  }
 }
 
 export function aggregateStats(rows: WeatherRow[]) {

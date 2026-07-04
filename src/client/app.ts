@@ -1,4 +1,37 @@
-/* global Chart */
+/* Weather dashboard front-end.
+   Source of truth is this TypeScript file; it compiles to public/app.js
+   (see tsconfig.client.json). Chart.js is loaded globally from a CDN. */
+
+declare const Chart: any;
+
+interface DateRow { date: string; }
+
+interface WeatherRow {
+  date: string;
+  temp_high: number; temp_avg: number; temp_low: number;
+  dew_high: number; dew_avg: number; dew_low: number;
+  hum_high: number; hum_avg: number; hum_low: number;
+  wind_high: number; wind_avg: number; wind_low: number;
+  pres_high: number; pres_low: number; precip: number;
+}
+
+interface StatTriple { high: number; avg: number; low: number; }
+interface Stats {
+  temp: StatTriple;
+  dew: StatTriple;
+  humidity: StatTriple;
+  wind: { high: number; avg: number };
+  pressure: StatTriple;
+  precip: { total: number; rainy_days: number };
+}
+
+interface PublicRow {
+  date: string;
+  temp_high: number | null;
+  temp_low: number | null;
+  wind_high: number | null;
+  precip: number | null;
+}
 
 const CHART_DEFAULTS = {
   responsive: true,
@@ -10,13 +43,13 @@ const CHART_DEFAULTS = {
   },
 };
 
-function mergeOpts(extra) {
+function mergeOpts(extra: any): any {
   return Object.assign({}, CHART_DEFAULTS, extra);
 }
 
-const charts = {};
+const charts: Record<string, any> = {};
 
-function mkChart(id, type, data, extraOpts = {}) {
+function mkChart(id: string, type: string, data: any, extraOpts: any = {}): void {
   const ctx = document.getElementById(id);
   if (charts[id]) charts[id].destroy();
   charts[id] = new Chart(ctx, { type, data, options: mergeOpts(extraOpts) });
@@ -24,23 +57,23 @@ function mkChart(id, type, data, extraOpts = {}) {
 
 // --- State ---
 let period = 'week';
-let allDates = [];
-let lastRows = [];   // rows from the most recent dashboard load (drives Compare range)
+let allDates: DateRow[] = [];
+let lastRows: WeatherRow[] = [];   // rows from the most recent dashboard load (drives Compare range)
 
 // --- Nav tabs ---
-document.querySelectorAll('[data-period]').forEach(btn => {
+document.querySelectorAll<HTMLElement>('[data-period]').forEach(btn => {
   btn.addEventListener('click', () => {
-    document.querySelectorAll('[data-period]').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll<HTMLElement>('[data-period]').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
-    period = btn.dataset.period;
+    period = btn.dataset.period!;
     renderControls();
     load();
   });
 });
 
 // --- Controls ---
-function renderControls() {
-  const el = document.getElementById('controls');
+function renderControls(): void {
+  const el = document.getElementById('controls')!;
   el.innerHTML = '';
 
   if (period === 'day') {
@@ -60,10 +93,10 @@ function renderControls() {
     const weekSel = document.createElement('select');
     for (let w = 1; w <= 53; w++) {
       const o = document.createElement('option');
-      o.value = w; o.textContent = `Week ${w}`;
+      o.value = String(w); o.textContent = `Week ${w}`;
       weekSel.appendChild(o);
     }
-    weekSel.value = isoWeek(refDate());
+    weekSel.value = String(isoWeek(refDate()));
     yearSel.addEventListener('change', load);
     weekSel.addEventListener('change', load);
     el.appendChild(yearSel);
@@ -75,10 +108,10 @@ function renderControls() {
     const names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     names.forEach((n, i) => {
       const o = document.createElement('option');
-      o.value = i + 1; o.textContent = n;
+      o.value = String(i + 1); o.textContent = n;
       monthSel.appendChild(o);
     });
-    monthSel.value = refDate().getMonth() + 1;
+    monthSel.value = String(refDate().getMonth() + 1);
     yearSel.addEventListener('change', load);
     monthSel.addEventListener('change', load);
     el.appendChild(yearSel);
@@ -86,7 +119,7 @@ function renderControls() {
 
   } else if (period === 'year') {
     el.appendChild(yearSelect());
-    el.querySelector('select').addEventListener('change', load);
+    (el.querySelector('select') as HTMLSelectElement).addEventListener('change', load);
 
   } else if (period === 'range') {
     // Two date pickers populated ONLY from dates that exist in the data,
@@ -132,7 +165,7 @@ function renderControls() {
   }
 }
 
-function yearSelect() {
+function yearSelect(): HTMLSelectElement {
   const years = [...new Set(allDates.map(d => d.date.slice(0, 4)))];
   const sel = document.createElement('select');
   (years.length ? years : [String(new Date().getFullYear())]).forEach(y => {
@@ -147,7 +180,7 @@ function yearSelect() {
 // Reference date = latest date that actually has data (falls back to today
 // when no data is loaded). Selectors default to this period so a fresh load
 // lands on populated data rather than the empty calendar-current period.
-function refDate() {
+function refDate(): Date {
   if (allDates.length) {
     const [y, m, d] = allDates[allDates.length - 1].date.split('-').map(Number);
     return new Date(y, m - 1, d);
@@ -155,17 +188,17 @@ function refDate() {
   return new Date();
 }
 
-function isoWeek(d) {
+function isoWeek(d: Date): number {
   const jan4 = new Date(d.getFullYear(), 0, 4);
-  const diff = d - jan4;
+  const diff = d.getTime() - jan4.getTime();
   return Math.ceil((diff / 86400000 + (jan4.getDay() || 7)) / 7);
 }
 
 // --- Load data ---
-async function load() {
-  const el = document.getElementById('controls');
+async function load(): Promise<void> {
+  const el = document.getElementById('controls')!;
   const sels = el.querySelectorAll('select');
-  let url;
+  let url: string;
 
   if (period === 'day') {
     url = `/api/day?date=${sels[0]?.value ?? ''}`;
@@ -174,8 +207,8 @@ async function load() {
   } else if (period === 'month') {
     url = `/api/month?year=${sels[0]?.value}&month=${sels[1]?.value}`;
   } else if (period === 'range') {
-    let from, to;
-    if (document.getElementById('range-all')?.checked && allDates.length) {
+    let from: string | undefined, to: string | undefined;
+    if ((document.getElementById('range-all') as HTMLInputElement | null)?.checked && allDates.length) {
       from = allDates[0].date;                       // whole dataset
       to = allDates[allDates.length - 1].date;
     } else {
@@ -189,7 +222,7 @@ async function load() {
 
   const resp = await fetch(url);
   if (!resp.ok) { lastRows = []; clearAll(); return; }
-  const { rows, stats } = await resp.json();
+  const { rows, stats } = await resp.json() as { rows: WeatherRow[]; stats: Stats };
 
   lastRows = rows;
   renderStats(stats);
@@ -198,11 +231,11 @@ async function load() {
 }
 
 // --- Data freshness (last import time) ---
-async function refreshStatus() {
+async function refreshStatus(): Promise<void> {
   try {
     const r = await fetch('/api/status');
-    const { last_import, records } = await r.json();
-    const el = document.getElementById('last-import');
+    const { last_import, records } = await r.json() as { last_import: string | null; records: number };
+    const el = document.getElementById('last-import')!;
     if (last_import) {
       const when = new Date(last_import);
       el.textContent = `Imported ${when.toLocaleString()} · ${records} records`;
@@ -214,7 +247,7 @@ async function refreshStatus() {
 }
 
 // --- Stats cards ---
-function renderStats(s) {
+function renderStats(s: Stats | undefined): void {
   if (!s) return;
   setText('s-temp-avg',    `${s.temp.avg} °C`);
   setText('s-temp-high',   `${s.temp.high} °C`);
@@ -234,17 +267,17 @@ function renderStats(s) {
   setText('s-dew-low',     `${s.dew.low} °C`);
 }
 
-function setText(id, val) {
+function setText(id: string, val: string | number): void {
   const el = document.getElementById(id);
-  if (el) el.textContent = val;
+  if (el) el.textContent = String(val);
 }
 
 // --- Charts ---
-function labels(rows) {
+function labels(rows: WeatherRow[]): string[] {
   return rows.map(r => r.date.slice(5)); // MM-DD
 }
 
-function renderCharts(rows) {
+function renderCharts(rows: WeatherRow[]): void {
   const lbl = labels(rows);
 
   mkChart('chart-temp', 'line', {
@@ -291,8 +324,8 @@ function renderCharts(rows) {
 }
 
 // --- Table ---
-function renderTable(rows) {
-  const tbody = document.getElementById('table-body');
+function renderTable(rows: WeatherRow[]): void {
+  const tbody = document.getElementById('table-body')!;
   tbody.innerHTML = rows.map(r => `
     <tr>
       <td>${r.date}</td>
@@ -311,27 +344,27 @@ function renderTable(rows) {
   `).join('');
 }
 
-function clearAll() {
+function clearAll(): void {
   ['chart-temp','chart-precip','chart-hum','chart-pres','chart-wind'].forEach(id => {
     if (charts[id]) { charts[id].destroy(); delete charts[id]; }
   });
-  document.getElementById('table-body').innerHTML = '';
+  document.getElementById('table-body')!.innerHTML = '';
 }
 
 // --- Import button ---
-document.getElementById('btn-import').addEventListener('click', async () => {
-  const btn = document.getElementById('btn-import');
+document.getElementById('btn-import')!.addEventListener('click', async () => {
+  const btn = document.getElementById('btn-import') as HTMLButtonElement;
   btn.textContent = '…';
   btn.disabled = true;
   try {
     const r = await fetch('/api/import', { method: 'POST' });
-    const j = await r.json();
+    const j = await r.json() as { total: number; inserted: number; updated: number; unchanged: number };
     // Report what actually changed, not just the row count in the file.
     btn.textContent = `✓ ${j.inserted} new · ${j.updated} upd`;
     btn.title = `${j.total} rows processed — ${j.inserted} new, ${j.updated} updated, ${j.unchanged} unchanged`;
     // refresh dates and reload
     const resp = await fetch('/api/dates');
-    allDates = await resp.json();
+    allDates = await resp.json() as DateRow[];
     renderControls();
     await load();
     await refreshStatus();
@@ -343,53 +376,53 @@ document.getElementById('btn-import').addEventListener('click', async () => {
 });
 
 // --- Compare vs public service (Baar) ---
-const cmpCharts = {};
+const cmpCharts: Record<string, any> = {};
 let compareOn = false;
 
-function mkCmpChart(id, type, data, extraOpts = {}) {
+function mkCmpChart(id: string, type: string, data: any, extraOpts: any = {}): void {
   const ctx = document.getElementById(id);
   if (cmpCharts[id]) cmpCharts[id].destroy();
   cmpCharts[id] = new Chart(ctx, { type, data, options: mergeOpts(extraOpts) });
 }
 
-document.getElementById('btn-compare').addEventListener('click', () => {
+document.getElementById('btn-compare')!.addEventListener('click', () => {
   compareOn = !compareOn;
-  const btn = document.getElementById('btn-compare');
-  document.getElementById('dashboard-view').classList.toggle('d-none', compareOn);
-  document.getElementById('compare-view').classList.toggle('d-none', !compareOn);
+  const btn = document.getElementById('btn-compare')!;
+  document.getElementById('dashboard-view')!.classList.toggle('d-none', compareOn);
+  document.getElementById('compare-view')!.classList.toggle('d-none', !compareOn);
   btn.classList.toggle('active', compareOn);
   if (compareOn) loadCompare();
 });
 
-async function loadCompare() {
-  const status = document.getElementById('cmp-status');
+async function loadCompare(): Promise<void> {
+  const status = document.getElementById('cmp-status')!;
   if (!lastRows.length) {
     status.textContent = 'No local data selected — pick a period on the dashboard first.';
     return;
   }
   const from = lastRows[0].date;
   const to = lastRows[lastRows.length - 1].date;
-  document.getElementById('cmp-range').textContent = `${from} → ${to}`;
+  document.getElementById('cmp-range')!.textContent = `${from} → ${to}`;
   status.textContent = 'Loading public data…';
 
-  let data;
+  let data: { location: string; source: string; mine: WeatherRow[]; public: PublicRow[] };
   try {
     const r = await fetch(`/api/compare?from=${from}&to=${to}`);
     if (!r.ok) throw new Error((await r.json()).error || r.statusText);
     data = await r.json();
   } catch (e) {
-    status.textContent = `Could not fetch public data: ${e.message}`;
+    status.textContent = `Could not fetch public data: ${(e as Error).message}`;
     return;
   }
   status.textContent = '';
 
   // Align public rows to my dates so both series share the same x-axis.
-  const pub = new Map(data.public.map(p => [p.date, p]));
+  const pub = new Map<string, PublicRow>(data.public.map(p => [p.date, p]));
   const lbl = lastRows.map(r => r.date.slice(5));
-  const mineOf = key => lastRows.map(r => r[key]);
-  const pubOf  = key => lastRows.map(r => pub.get(r.date)?.[key] ?? null);
+  const mineOf = (key: keyof WeatherRow) => lastRows.map(r => r[key]);
+  const pubOf  = (key: keyof PublicRow) => lastRows.map(r => pub.get(r.date)?.[key] ?? null);
 
-  const pair = (label, mineKey, pubKey) => ({
+  const pair = (label: string, mineKey: keyof WeatherRow, pubKey: keyof PublicRow) => ({
     labels: lbl,
     datasets: [
       { label: `Me · ${label}`,   data: mineOf(mineKey), borderColor: '#38bdf8', backgroundColor: 'transparent', pointRadius: 2, tension: 0.3 },
@@ -411,22 +444,22 @@ async function loadCompare() {
   renderCompareSummary(pub);
 }
 
-function renderCompareSummary(pub) {
-  const avg = vals => {
-    const v = vals.filter(x => x != null && !Number.isNaN(x));
+function renderCompareSummary(pub: Map<string, PublicRow>): void {
+  const avg = (vals: (number | null)[]): number | null => {
+    const v = vals.filter((x): x is number => x != null && !Number.isNaN(x));
     return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
   };
-  const rows = [
+  const rows: [string, keyof WeatherRow & keyof PublicRow][] = [
     ['Temp High (°C)', 'temp_high'],
     ['Temp Low (°C)',  'temp_low'],
     ['Wind Max (km/h)','wind_high'],
     ['Precip (mm)',    'precip'],
   ];
-  const fmt = n => (n == null ? '—' : n.toFixed(1));
+  const fmt = (n: number | null) => (n == null ? '—' : n.toFixed(1));
 
-  document.getElementById('cmp-summary-body').innerHTML = rows.map(([name, key]) => {
-    const mine = avg(lastRows.map(r => r[key]));
-    const theirs = avg(lastRows.map(r => pub.get(r.date)?.[key] ?? null));
+  document.getElementById('cmp-summary-body')!.innerHTML = rows.map(([name, key]) => {
+    const mine = avg(lastRows.map(r => r[key] as number));
+    const theirs = avg(lastRows.map(r => (pub.get(r.date)?.[key] ?? null) as number | null));
     const diff = (mine != null && theirs != null) ? mine - theirs : null;
     const diffCls = diff == null ? '' : diff > 0 ? 'text-danger' : diff < 0 ? 'text-info' : '';
     const diffTxt = diff == null ? '—' : `${diff > 0 ? '+' : ''}${diff.toFixed(1)}`;
@@ -437,7 +470,7 @@ function renderCompareSummary(pub) {
 // --- Init ---
 (async () => {
   const resp = await fetch('/api/dates');
-  allDates = await resp.json();
+  allDates = await resp.json() as DateRow[];
   renderControls();
   await load();
   await refreshStatus();

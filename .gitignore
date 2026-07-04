@@ -4,6 +4,9 @@ node_modules/
 # Build output
 dist/
 
+# Generated front-end bundle (compiled from src/client/app.ts)
+public/app.js
+
 # Generated SQLite database (rebuilt from weather_data.txt on server startup)
 weather.db
 weather.db-shm

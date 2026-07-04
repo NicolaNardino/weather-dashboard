@@ -5,9 +5,10 @@ export from your station, and browse temperature, humidity, wind, pressure,
 precipitation and dew point across any time window — then compare your
 readings against a public weather service.
 
-Built with Express + TypeScript on the back end and vanilla JavaScript on the
-front end. Storage is a local SQLite file via Node's **built-in** `node:sqlite`
-module — no native addons, no database server to run.
+Built entirely in **TypeScript** — Express on the back end and a compiled
+TypeScript front end (no framework, no bundler). Storage is a local SQLite file
+via Node's **built-in** `node:sqlite` module — no native addons, no database
+server to run.
 
 ![Dashboard](dashboard.png)
 
@@ -53,10 +54,12 @@ PORT=8080 npm run dev
 
 | Command | What it does |
 | --- | --- |
-| `npm run dev` | Run the server with `ts-node` (primary dev command) → http://localhost:3000 |
-| `npm run build` | Compile `src/` → `dist/` with `tsc` |
+| `npm run dev` | Compile the front end, then run the server with `ts-node` → http://localhost:3000 |
+| `npm run build` | Compile the server (`src/` → `dist/`) and the client (`src/client/app.ts` → `public/app.js`) |
+| `npm run build:client` | Compile only the front end → `public/app.js` |
 | `npm start` | Run the compiled server (`node dist/server.js`; requires `build` first) |
 | `npm run import` | Re-parse `weather_data.txt` into `weather.db` from the CLI |
+| `npm run screenshot` | Run the Playwright verification harness (server must be up) |
 
 ## Data format
 
@@ -91,20 +94,26 @@ The front end is a thin client over these routes; each period route returns
 
 ```
 src/
-  db.ts        SQLite access (node:sqlite), query helpers, stat aggregation
-  import.ts    Parses weather_data.txt → weather.db
-  server.ts    Express routes over db.ts
+  db.ts          SQLite access (node:sqlite), query helpers, stat aggregation
+  import.ts      Parses weather_data.txt → weather.db
+  server.ts      Express routes over db.ts
+  client/
+    app.ts       All UI state, charts, and view toggling — no framework
 public/
-  index.html   Dashboard markup (Bootstrap + Chart.js from CDN)
-  app.js       All UI state, charts, and view toggling — no framework
-  style.css    Dark-theme styling
+  index.html     Dashboard markup (Bootstrap + Chart.js from CDN)
+  app.js         Compiled from src/client/app.ts (generated, git-ignored)
+  style.css      Dark-theme styling
+screenshot.ts      Playwright verification harness
 weather_data.txt   Raw station export (the import source)
 weather.db         SQLite database (generated)
 ```
 
-The front end has no build step — `public/` is served as-is and Bootstrap /
-Chart.js load from a CDN. After editing anything in `src/`, restart the dev
-server; editing `public/` only needs a browser refresh.
+**Everything is TypeScript.** The front end compiles from `src/client/app.ts`
+to `public/app.js` with `tsc` (no bundler); `public/` is otherwise served as-is
+with Bootstrap / Chart.js from a CDN. After editing `src/client/app.ts`, run
+`npm run build:client` (or restart `npm run dev`, which does it) and refresh the
+browser. After editing anything under `src/`, restart the dev server. Editing
+`public/index.html` or `public/style.css` only needs a browser refresh.
 
 ## Verification
 
@@ -115,5 +124,5 @@ populate, captures screenshots, and reports any console errors.
 ```bash
 npx playwright install chromium   # once
 npm run dev &                     # server must be up first
-node screenshot.mjs               # writes dashboard*.png
+npm run screenshot                # writes dashboard*.png
 ```
