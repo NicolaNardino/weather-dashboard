@@ -272,6 +272,61 @@ function setText(id: string, val: string | number): void {
   if (el) el.textContent = String(val);
 }
 
+// --- Chart visibility ---
+// Each dashboard chart can be toggled on/off. Hiding one removes its whole
+// grid column so the remaining charts reflow to fill the row. The choice is
+// persisted in localStorage so it survives reloads.
+const CHART_META: { key: string; label: string }[] = [
+  { key: 'temp',   label: 'Temperature' },
+  { key: 'precip', label: 'Precipitation' },
+  { key: 'hum',    label: 'Humidity' },
+  { key: 'pres',   label: 'Pressure' },
+  { key: 'wind',   label: 'Wind' },
+];
+
+function loadChartVisibility(): Record<string, boolean> {
+  const vis: Record<string, boolean> = {};
+  let saved: Record<string, boolean> = {};
+  try { saved = JSON.parse(localStorage.getItem('chartVisibility') || '{}'); } catch { /* ignore */ }
+  CHART_META.forEach(c => { vis[c.key] = saved[c.key] !== false; }); // default visible
+  return vis;
+}
+
+let chartVisibility: Record<string, boolean> = loadChartVisibility();
+
+function applyChartVisibility(): void {
+  CHART_META.forEach(c => {
+    const col = document.querySelector<HTMLElement>(`[data-chart="${c.key}"]`);
+    if (col) col.classList.toggle('d-none', !chartVisibility[c.key]);
+  });
+  // Charts that just became visible were sized to a hidden (0-width) canvas;
+  // nudge Chart.js to re-measure now that the column has real dimensions.
+  CHART_META.forEach(c => {
+    if (chartVisibility[c.key]) charts[`chart-${c.key}`]?.resize();
+  });
+}
+
+function renderChartToggles(): void {
+  const el = document.getElementById('chart-toggles');
+  if (!el) return;
+  el.innerHTML = '';
+  CHART_META.forEach(c => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-outline-secondary' + (chartVisibility[c.key] ? ' active' : '');
+    btn.textContent = c.label;
+    btn.setAttribute('aria-pressed', String(chartVisibility[c.key]));
+    btn.addEventListener('click', () => {
+      chartVisibility[c.key] = !chartVisibility[c.key];
+      btn.classList.toggle('active', chartVisibility[c.key]);
+      btn.setAttribute('aria-pressed', String(chartVisibility[c.key]));
+      try { localStorage.setItem('chartVisibility', JSON.stringify(chartVisibility)); } catch { /* ignore */ }
+      applyChartVisibility();
+    });
+    el.appendChild(btn);
+  });
+}
+
 // --- Charts ---
 function labels(rows: WeatherRow[]): string[] {
   return rows.map(r => r.date.slice(5)); // MM-DD
@@ -321,6 +376,8 @@ function renderCharts(rows: WeatherRow[]): void {
       { label: 'Avg',  data: rows.map(r => r.wind_avg),  borderColor: '#fdba74', backgroundColor: 'transparent', pointRadius: 2, tension: 0.3 },
     ],
   });
+
+  applyChartVisibility();
 }
 
 // --- Table ---
@@ -471,6 +528,8 @@ function renderCompareSummary(pub: Map<string, PublicRow>): void {
 (async () => {
   const resp = await fetch('/api/dates');
   allDates = await resp.json() as DateRow[];
+  renderChartToggles();
+  applyChartVisibility();   // apply persisted hidden state immediately, even before charts render
   renderControls();
   await load();
   await refreshStatus();
