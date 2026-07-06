@@ -26,6 +26,12 @@
 
 <div id="dashboard-view" class="container-fluid px-4 py-3">
 
+  <!-- Chart visibility toggles -->
+  <div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
+    <span class="text-muted small">Charts:</span>
+    <div class="btn-group btn-group-sm" id="chart-toggles"></div>
+  </div>
+
   <!-- Stat cards -->
   <div class="row g-3 mb-3" id="stat-cards">
     <div class="col-6 col-md-4 col-xl-2">
@@ -86,7 +92,7 @@
 
   <!-- Charts row 1 -->
   <div class="row g-3 mb-3">
-    <div class="col-12 col-xl-8">
+    <div class="col-12 col-xl-8" data-chart="temp">
       <div class="card bg-secondary-subtle border-0">
         <div class="card-body">
           <h6 class="card-title text-muted">Temperature (°C)</h6>
@@ -94,7 +100,7 @@
         </div>
       </div>
     </div>
-    <div class="col-12 col-xl-4">
+    <div class="col-12 col-xl-4" data-chart="precip">
       <div class="card bg-secondary-subtle border-0">
         <div class="card-body">
           <h6 class="card-title text-muted">Precipitation (mm)</h6>
@@ -106,7 +112,7 @@
 
   <!-- Charts row 2 -->
   <div class="row g-3 mb-3">
-    <div class="col-12 col-md-6 col-xl-4">
+    <div class="col-12 col-md-6 col-xl-4" data-chart="hum">
       <div class="card bg-secondary-subtle border-0">
         <div class="card-body">
           <h6 class="card-title text-muted">Humidity (%)</h6>
@@ -114,7 +120,7 @@
         </div>
       </div>
     </div>
-    <div class="col-12 col-md-6 col-xl-4">
+    <div class="col-12 col-md-6 col-xl-4" data-chart="pres">
       <div class="card bg-secondary-subtle border-0">
         <div class="card-body">
           <h6 class="card-title text-muted">Pressure (hPa)</h6>
@@ -122,7 +128,7 @@
         </div>
       </div>
     </div>
-    <div class="col-12 col-md-6 col-xl-4">
+    <div class="col-12 col-md-6 col-xl-4" data-chart="wind">
       <div class="card bg-secondary-subtle border-0">
         <div class="card-body">
           <h6 class="card-title text-muted">Wind Speed (km/h)</h6>
