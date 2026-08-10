@@ -19,7 +19,12 @@ export interface ImportResult {
   unchanged: number;  // dates already present with identical values
 }
 
-// Fields (in insert order) used to detect whether an existing row changed.
+// The tab-separated file this app imports from.
+export const DATA_FILE = path.join(process.cwd(), 'weather_data.txt');
+
+// The data columns, in both file order (cols 1..15, after the date in col 0)
+// and insert order. Drives the INSERT column list, the parsed value list and
+// the changed-row comparison, so those three can't drift apart.
 const FIELDS = [
   'temp_high', 'temp_avg', 'temp_low',
   'dew_high', 'dew_avg', 'dew_low',
@@ -31,13 +36,8 @@ const FIELDS = [
 export function importFile(filePath: string): ImportResult {
   const db = getDb();
   const insert = db.prepare(`
-    INSERT OR REPLACE INTO weather
-      (date, temp_high, temp_avg, temp_low,
-       dew_high, dew_avg, dew_low,
-       hum_high, hum_avg, hum_low,
-       wind_high, wind_avg, wind_low,
-       pres_high, pres_low, precip)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    INSERT OR REPLACE INTO weather (date, ${FIELDS.join(', ')})
+    VALUES (${Array(FIELDS.length + 1).fill('?').join(',')})
   `);
 
   // Snapshot existing rows up front so we can tell new/changed from unchanged.
@@ -57,14 +57,8 @@ export function importFile(filePath: string): ImportResult {
     if (!date) continue;
     if (cols.length < 16) continue;
 
-    const values = [
-      parseNum(cols[1]),  parseNum(cols[2]),  parseNum(cols[3]),
-      parseNum(cols[4]),  parseNum(cols[5]),  parseNum(cols[6]),
-      parseNum(cols[7]),  parseNum(cols[8]),  parseNum(cols[9]),
-      parseNum(cols[10]), parseNum(cols[11]), parseNum(cols[12]),
-      parseNum(cols[13]), parseNum(cols[14]),
-      parseNum(cols[15]),
-    ];
+    // cols[0] is the date; the 15 data columns follow in FIELDS order.
+    const values = FIELDS.map((_, i) => parseNum(cols[i + 1]));
 
     const prev = existing.get(date);
     if (!prev) {
@@ -89,8 +83,7 @@ export function importFile(filePath: string): ImportResult {
 
 // CLI usage: ts-node src/import.ts
 if (require.main === module) {
-  const dataFile = path.join(process.cwd(), 'weather_data.txt');
-  const r = importFile(dataFile);
+  const r = importFile(DATA_FILE);
   console.log(
     `Imported ${r.total} records into weather.db ` +
     `(${r.inserted} new, ${r.updated} updated, ${r.unchanged} unchanged)`,
