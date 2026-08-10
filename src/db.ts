@@ -139,41 +139,36 @@ export function upsertPublic(location: string, rows: PublicRow[]): void {
   }
 }
 
+/** The numeric measurement columns — everything on a row but its id and date. */
+type Measure = Exclude<keyof WeatherRow, 'id' | 'date'>;
+
 export function aggregateStats(rows: WeatherRow[]) {
   if (!rows.length) return null;
 
-  const avg = (vals: number[]) => vals.reduce((a, b) => a + b, 0) / vals.length;
+  const col = (key: Measure) => rows.map(r => r[key]);
+  const max = (key: Measure) => Math.max(...col(key));
+  const min = (key: Measure) => Math.min(...col(key));
   const sum = (vals: number[]) => vals.reduce((a, b) => a + b, 0);
+  const round = (n: number, dp: number) => Math.round(n * 10 ** dp) / 10 ** dp;
+  /** Mean of `vals`, rounded for display. */
+  const mean = (vals: number[], dp = 1) => round(sum(vals) / vals.length, dp);
+  const avg = (key: Measure, dp = 1) => mean(col(key), dp);
 
   return {
     count: rows.length,
-    temp: {
-      high: Math.max(...rows.map(r => r.temp_high)),
-      avg:  Math.round(avg(rows.map(r => r.temp_avg)) * 10) / 10,
-      low:  Math.min(...rows.map(r => r.temp_low)),
-    },
-    humidity: {
-      high: Math.max(...rows.map(r => r.hum_high)),
-      avg:  Math.round(avg(rows.map(r => r.hum_avg)) * 10) / 10,
-      low:  Math.min(...rows.map(r => r.hum_low)),
-    },
-    wind: {
-      high: Math.max(...rows.map(r => r.wind_high)),
-      avg:  Math.round(avg(rows.map(r => r.wind_avg)) * 10) / 10,
-    },
+    temp:     { high: max('temp_high'), avg: avg('temp_avg'), low: min('temp_low') },
+    humidity: { high: max('hum_high'),  avg: avg('hum_avg'),  low: min('hum_low') },
+    wind:     { high: max('wind_high'), avg: avg('wind_avg') },
     pressure: {
-      high: Math.max(...rows.map(r => r.pres_high)),
-      avg:  Math.round(avg(rows.map(r => r.pres_high).map((h, i) => (h + rows[i].pres_low) / 2)) * 100) / 100,
-      low:  Math.min(...rows.map(r => r.pres_low)),
+      high: max('pres_high'),
+      // Each day's mid-point (high+low)/2, averaged over the period.
+      avg: mean(rows.map(r => (r.pres_high + r.pres_low) / 2), 2),
+      low: min('pres_low'),
     },
-    dew: {
-      high: Math.max(...rows.map(r => r.dew_high)),
-      avg:  Math.round(avg(rows.map(r => r.dew_avg)) * 10) / 10,
-      low:  Math.min(...rows.map(r => r.dew_low)),
-    },
+    dew:      { high: max('dew_high'),  avg: avg('dew_avg'),  low: min('dew_low') },
     precip: {
-      total: Math.round(sum(rows.map(r => r.precip)) * 100) / 100,
-      max:   Math.max(...rows.map(r => r.precip)),
+      total: round(sum(col('precip')), 2),
+      max:   max('precip'),
       rainy_days: rows.filter(r => r.precip > 0).length,
     },
   };
