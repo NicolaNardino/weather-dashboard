@@ -49,10 +49,32 @@ function mergeOpts(extra: any): any {
 
 const charts: Record<string, any> = {};
 
-function mkChart(id: string, type: string, data: any, extraOpts: any = {}): void {
+// Build (or rebuild) a chart into `store`, which keeps the live instances so a
+// re-render can destroy the previous one first. The dashboard and the compare
+// view keep separate stores; everything else about the two is the same.
+function mkChart(
+  store: Record<string, any>,
+  id: string,
+  type: string,
+  data: any,
+  extraOpts: any = {},
+): void {
   const ctx = document.getElementById(id);
-  if (charts[id]) charts[id].destroy();
-  charts[id] = new Chart(ctx, { type, data, options: mergeOpts(extraOpts) });
+  if (store[id]) store[id].destroy();
+  store[id] = new Chart(ctx, { type, data, options: mergeOpts(extraOpts) });
+}
+
+/** A line series in the house style; `extra` overrides (fill, borderDash, …). */
+function line(label: string, data: (number | null)[], color: string, extra: any = {}): any {
+  return {
+    label,
+    data,
+    borderColor: color,
+    backgroundColor: 'transparent',
+    pointRadius: 2,
+    tension: 0.3,
+    ...extra,
+  };
 }
 
 // --- State ---
@@ -72,72 +94,61 @@ document.querySelectorAll<HTMLElement>('[data-period]').forEach(btn => {
 });
 
 // --- Controls ---
+
+/**
+ * A <select> built from value/label pairs, with `selected` pre-chosen (ignored
+ * when undefined, e.g. an empty dataset) and reloading the dashboard on change.
+ * Every control below is one of these.
+ */
+function selectEl(items: { value: string; label: string }[], selected?: string): HTMLSelectElement {
+  const sel = document.createElement('select');
+  for (const it of items) {
+    const o = document.createElement('option');
+    o.value = it.value; o.textContent = it.label;
+    sel.appendChild(o);
+  }
+  if (selected != null) sel.value = selected;
+  sel.addEventListener('change', load);
+  return sel;
+}
+
+/** Option list of every date in the dataset (value and label are the date). */
+function dateOptions(): { value: string; label: string }[] {
+  return allDates.map(d => ({ value: d.date, label: d.date }));
+}
+
+const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
 function renderControls(): void {
   const el = document.getElementById('controls')!;
   el.innerHTML = '';
+  const dates = allDates.map(d => d.date);
 
   if (period === 'day') {
-    const dates = allDates.map(d => d.date);
-    const sel = document.createElement('select');
-    dates.forEach(d => {
-      const o = document.createElement('option');
-      o.value = d; o.textContent = d;
-      sel.appendChild(o);
-    });
-    if (dates.length) sel.value = dates[dates.length - 1];
-    sel.addEventListener('change', load);
-    el.appendChild(sel);
+    el.appendChild(selectEl(dateOptions(), dates[dates.length - 1]));
 
   } else if (period === 'week') {
-    const yearSel = yearSelect();
-    const weekSel = document.createElement('select');
-    for (let w = 1; w <= 53; w++) {
-      const o = document.createElement('option');
-      o.value = String(w); o.textContent = `Week ${w}`;
-      weekSel.appendChild(o);
-    }
-    weekSel.value = String(isoWeek(refDate()));
-    yearSel.addEventListener('change', load);
-    weekSel.addEventListener('change', load);
-    el.appendChild(yearSel);
-    el.appendChild(weekSel);
+    const weeks = Array.from({ length: 53 }, (_, i) => ({
+      value: String(i + 1),
+      label: `Week ${i + 1}`,
+    }));
+    el.appendChild(yearSelect());
+    el.appendChild(selectEl(weeks, String(isoWeek(refDate()))));
 
   } else if (period === 'month') {
-    const yearSel = yearSelect();
-    const monthSel = document.createElement('select');
-    const names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    names.forEach((n, i) => {
-      const o = document.createElement('option');
-      o.value = String(i + 1); o.textContent = n;
-      monthSel.appendChild(o);
-    });
-    monthSel.value = String(refDate().getMonth() + 1);
-    yearSel.addEventListener('change', load);
-    monthSel.addEventListener('change', load);
-    el.appendChild(yearSel);
-    el.appendChild(monthSel);
+    const months = MONTH_NAMES.map((n, i) => ({ value: String(i + 1), label: n }));
+    el.appendChild(yearSelect());
+    el.appendChild(selectEl(months, String(refDate().getMonth() + 1)));
 
   } else if (period === 'year') {
     el.appendChild(yearSelect());
-    (el.querySelector('select') as HTMLSelectElement).addEventListener('change', load);
 
   } else if (period === 'range') {
     // Two date pickers populated ONLY from dates that exist in the data,
     // so the user can never select a window outside the recorded range.
-    const dates = allDates.map(d => d.date);
-    const fromSel = document.createElement('select');
-    const toSel = document.createElement('select');
-    dates.forEach(d => {
-      const of = document.createElement('option'); of.value = d; of.textContent = d; fromSel.appendChild(of);
-      const ot = document.createElement('option'); ot.value = d; ot.textContent = d; toSel.appendChild(ot);
-    });
-    if (dates.length) {
-      toSel.value = dates[dates.length - 1];
-      // Default to the last ~30 available days for a sensible starting window.
-      fromSel.value = dates[Math.max(0, dates.length - 30)];
-    }
-    fromSel.addEventListener('change', load);
-    toSel.addEventListener('change', load);
+    // From defaults to the last ~30 available days for a sensible window.
+    const fromSel = selectEl(dateOptions(), dates[Math.max(0, dates.length - 30)]);
+    const toSel = selectEl(dateOptions(), dates[dates.length - 1]);
     const fromLbl = document.createElement('span'); fromLbl.className = 'text-muted small'; fromLbl.textContent = 'From';
     const toLbl = document.createElement('span'); toLbl.className = 'text-muted small'; toLbl.textContent = 'To';
 
@@ -167,14 +178,9 @@ function renderControls(): void {
 
 function yearSelect(): HTMLSelectElement {
   const years = [...new Set(allDates.map(d => d.date.slice(0, 4)))];
-  const sel = document.createElement('select');
-  (years.length ? years : [String(new Date().getFullYear())]).forEach(y => {
-    const o = document.createElement('option');
-    o.value = y; o.textContent = y;
-    sel.appendChild(o);
-  });
-  sel.value = years[years.length - 1] || String(new Date().getFullYear());
-  return sel;
+  const thisYear = String(new Date().getFullYear());
+  const list = years.length ? years : [thisYear];
+  return selectEl(list.map(y => ({ value: y, label: y })), years[years.length - 1] || thisYear);
 }
 
 // Reference date = latest date that actually has data (falls back to today
@@ -335,45 +341,47 @@ function labels(rows: WeatherRow[]): string[] {
 function renderCharts(rows: WeatherRow[]): void {
   const lbl = labels(rows);
 
-  mkChart('chart-temp', 'line', {
+  const col = (key: keyof WeatherRow) => rows.map(r => r[key] as number);
+
+  mkChart(charts, 'chart-temp', 'line', {
     labels: lbl,
     datasets: [
-      { label: 'High',  data: rows.map(r => r.temp_high), borderColor: '#f87272', backgroundColor: 'transparent', pointRadius: 2, tension: 0.3 },
-      { label: 'Avg',   data: rows.map(r => r.temp_avg),  borderColor: '#facc15', backgroundColor: 'transparent', pointRadius: 2, tension: 0.3 },
-      { label: 'Low',   data: rows.map(r => r.temp_low),  borderColor: '#60a5fa', backgroundColor: 'transparent', pointRadius: 2, tension: 0.3 },
-      { label: 'Dew',   data: rows.map(r => r.dew_avg),   borderColor: '#4ade80', backgroundColor: 'transparent', pointRadius: 2, tension: 0.3, borderDash: [4,3] },
+      line('High', col('temp_high'), '#f87272'),
+      line('Avg',  col('temp_avg'),  '#facc15'),
+      line('Low',  col('temp_low'),  '#60a5fa'),
+      line('Dew',  col('dew_avg'),   '#4ade80', { borderDash: [4,3] }),
     ],
   });
 
-  mkChart('chart-precip', 'bar', {
+  mkChart(charts, 'chart-precip', 'bar', {
     labels: lbl,
     datasets: [
-      { label: 'Precip', data: rows.map(r => r.precip), backgroundColor: '#60a5fa99' },
+      { label: 'Precip', data: col('precip'), backgroundColor: '#60a5fa99' },
     ],
   });
 
-  mkChart('chart-hum', 'line', {
+  mkChart(charts, 'chart-hum', 'line', {
     labels: lbl,
     datasets: [
-      { label: 'High', data: rows.map(r => r.hum_high), borderColor: '#f87272', backgroundColor: '#f8727211', fill: true, pointRadius: 2, tension: 0.3 },
-      { label: 'Avg',  data: rows.map(r => r.hum_avg),  borderColor: '#facc15', backgroundColor: 'transparent', pointRadius: 2, tension: 0.3 },
-      { label: 'Low',  data: rows.map(r => r.hum_low),  borderColor: '#60a5fa', backgroundColor: '#60a5fa11', fill: true, pointRadius: 2, tension: 0.3 },
+      line('High', col('hum_high'), '#f87272', { backgroundColor: '#f8727211', fill: true }),
+      line('Avg',  col('hum_avg'),  '#facc15'),
+      line('Low',  col('hum_low'),  '#60a5fa', { backgroundColor: '#60a5fa11', fill: true }),
     ],
   }, { scales: { ...CHART_DEFAULTS.scales, y: { ...CHART_DEFAULTS.scales.y, min: 0, max: 100 } } });
 
-  mkChart('chart-pres', 'line', {
+  mkChart(charts, 'chart-pres', 'line', {
     labels: lbl,
     datasets: [
-      { label: 'High', data: rows.map(r => r.pres_high), borderColor: '#a78bfa', backgroundColor: 'transparent', pointRadius: 2, tension: 0.3 },
-      { label: 'Low',  data: rows.map(r => r.pres_low),  borderColor: '#818cf8', backgroundColor: '#818cf811', fill: true, pointRadius: 2, tension: 0.3 },
+      line('High', col('pres_high'), '#a78bfa'),
+      line('Low',  col('pres_low'),  '#818cf8', { backgroundColor: '#818cf811', fill: true }),
     ],
   });
 
-  mkChart('chart-wind', 'line', {
+  mkChart(charts, 'chart-wind', 'line', {
     labels: lbl,
     datasets: [
-      { label: 'High', data: rows.map(r => r.wind_high), borderColor: '#fb923c', backgroundColor: '#fb923c11', fill: true, pointRadius: 2, tension: 0.3 },
-      { label: 'Avg',  data: rows.map(r => r.wind_avg),  borderColor: '#fdba74', backgroundColor: 'transparent', pointRadius: 2, tension: 0.3 },
+      line('High', col('wind_high'), '#fb923c', { backgroundColor: '#fb923c11', fill: true }),
+      line('Avg',  col('wind_avg'),  '#fdba74'),
     ],
   });
 
@@ -402,7 +410,8 @@ function renderTable(rows: WeatherRow[]): void {
 }
 
 function clearAll(): void {
-  ['chart-temp','chart-precip','chart-hum','chart-pres','chart-wind'].forEach(id => {
+  CHART_META.forEach(c => {
+    const id = `chart-${c.key}`;
     if (charts[id]) { charts[id].destroy(); delete charts[id]; }
   });
   document.getElementById('table-body')!.innerHTML = '';
@@ -435,12 +444,6 @@ document.getElementById('btn-import')!.addEventListener('click', async () => {
 // --- Compare vs public service (Baar) ---
 const cmpCharts: Record<string, any> = {};
 let compareOn = false;
-
-function mkCmpChart(id: string, type: string, data: any, extraOpts: any = {}): void {
-  const ctx = document.getElementById(id);
-  if (cmpCharts[id]) cmpCharts[id].destroy();
-  cmpCharts[id] = new Chart(ctx, { type, data, options: mergeOpts(extraOpts) });
-}
 
 document.getElementById('btn-compare')!.addEventListener('click', () => {
   compareOn = !compareOn;
@@ -475,22 +478,22 @@ async function loadCompare(): Promise<void> {
 
   // Align public rows to my dates so both series share the same x-axis.
   const pub = new Map<string, PublicRow>(data.public.map(p => [p.date, p]));
-  const lbl = lastRows.map(r => r.date.slice(5));
-  const mineOf = (key: keyof WeatherRow) => lastRows.map(r => r[key]);
+  const lbl = labels(lastRows);
+  const mineOf = (key: keyof WeatherRow) => lastRows.map(r => r[key] as number);
   const pubOf  = (key: keyof PublicRow) => lastRows.map(r => pub.get(r.date)?.[key] ?? null);
 
   const pair = (label: string, mineKey: keyof WeatherRow, pubKey: keyof PublicRow) => ({
     labels: lbl,
     datasets: [
-      { label: `Me · ${label}`,   data: mineOf(mineKey), borderColor: '#38bdf8', backgroundColor: 'transparent', pointRadius: 2, tension: 0.3 },
-      { label: `Baar · ${label}`, data: pubOf(pubKey),   borderColor: '#fb923c', backgroundColor: 'transparent', pointRadius: 2, tension: 0.3, borderDash: [5, 3] },
+      line(`Me · ${label}`,   mineOf(mineKey), '#38bdf8'),
+      line(`Baar · ${label}`, pubOf(pubKey) as (number | null)[], '#fb923c', { borderDash: [5, 3] }),
     ],
   });
 
-  mkCmpChart('cmp-temp-high', 'line', pair('High', 'temp_high', 'temp_high'));
-  mkCmpChart('cmp-temp-low',  'line', pair('Low',  'temp_low',  'temp_low'));
-  mkCmpChart('cmp-wind',      'line', pair('Wind', 'wind_high', 'wind_high'));
-  mkCmpChart('cmp-precip', 'bar', {
+  mkChart(cmpCharts, 'cmp-temp-high', 'line', pair('High', 'temp_high', 'temp_high'));
+  mkChart(cmpCharts, 'cmp-temp-low',  'line', pair('Low',  'temp_low',  'temp_low'));
+  mkChart(cmpCharts, 'cmp-wind',      'line', pair('Wind', 'wind_high', 'wind_high'));
+  mkChart(cmpCharts, 'cmp-precip', 'bar', {
     labels: lbl,
     datasets: [
       { label: 'Me',   data: mineOf('precip'), backgroundColor: '#38bdf899' },
