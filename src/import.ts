@@ -57,14 +57,8 @@ export function importFile(filePath: string): ImportResult {
     if (!date) continue;
     if (cols.length < 16) continue;
 
-    const values = [
-      parseNum(cols[1]),  parseNum(cols[2]),  parseNum(cols[3]),
-      parseNum(cols[4]),  parseNum(cols[5]),  parseNum(cols[6]),
-      parseNum(cols[7]),  parseNum(cols[8]),  parseNum(cols[9]),
-      parseNum(cols[10]), parseNum(cols[11]), parseNum(cols[12]),
-      parseNum(cols[13]), parseNum(cols[14]),
-      parseNum(cols[15]),
-    ];
+    // cols[0] is the date; the remaining 15 line up with FIELDS.
+    const values = FIELDS.map((_, i) => parseNum(cols[i + 1]));
 
     const prev = existing.get(date);
     if (!prev) {
@@ -87,12 +81,16 @@ export function importFile(filePath: string): ImportResult {
   return result;
 }
 
+/** The data file the CLI and the server both import from. */
+export const DATA_FILE = path.join(process.cwd(), 'weather_data.txt');
+
+/** "(3 new, 1 updated, 265 unchanged)" — the tail of every import log line. */
+export function describeImport(r: ImportResult): string {
+  return `(${r.inserted} new, ${r.updated} updated, ${r.unchanged} unchanged)`;
+}
+
 // CLI usage: ts-node src/import.ts
 if (require.main === module) {
-  const dataFile = path.join(process.cwd(), 'weather_data.txt');
-  const r = importFile(dataFile);
-  console.log(
-    `Imported ${r.total} records into weather.db ` +
-    `(${r.inserted} new, ${r.updated} updated, ${r.unchanged} unchanged)`,
-  );
+  const r = importFile(DATA_FILE);
+  console.log(`Imported ${r.total} records into weather.db ${describeImport(r)}`);
 }
