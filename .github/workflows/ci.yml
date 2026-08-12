@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel superseded runs on the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          # src/db.ts uses node:sqlite (DatabaseSync), which needs Node 22+;
+          # development runs Node 24, so CI matches that.
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The repo's headline rule (see CLAUDE.md): every source file is
+      # TypeScript. public/app.js is generated build output and gitignored, so
+      # a tracked .js/.mjs/.cjs means the rule has been broken.
+      - name: No plain JavaScript in source
+        run: |
+          stray=$(git ls-files '*.js' '*.mjs' '*.cjs')
+          if [ -n "$stray" ]; then
+            echo "::error::TypeScript-only rule violated — these JS files are tracked:"
+            echo "$stray"
+            exit 1
+          fi
+          echo "No tracked JavaScript source files."
+
+      # tsc for the server (-> dist/) and the client bundle (-> public/app.js).
+      # There is no separate linter or type-check script; this is the gate.
+      - name: Build
+        run: npm run build
+
+      # Parses the committed weather_data.txt into weather.db. Catches parser
+      # regressions against real fixture data, and gives the server below a
+      # populated database to serve.
+      - name: Import weather data
+        run: npm run import
+
+      - name: Install Chromium for Playwright
+        run: npx playwright install --with-deps chromium
+
+      # The de-facto end-to-end gate: boots the built server and drives the
+      # dashboard, asserting every period renders with populated stat cards and
+      # no console errors. screenshot.ts exits non-zero when any of that fails.
+      #
+      # Note this pulls Bootstrap and Chart.js from a CDN, so a CDN outage will
+      # fail the run — deliberately, since the dashboard genuinely doesn't work
+      # without them, but it is the most likely source of a flaky failure.
+      - name: Verify the dashboard end-to-end
+        run: |
+          npm start &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:3000 >/dev/null && break
+            sleep 1
+          done
+          curl -sf http://localhost:3000 >/dev/null || { echo "::error::server never came up"; exit 1; }
+          npm run screenshot
+
+      # Handy for eyeballing a UI change in a PR, and for diagnosing a failure
+      # in the step above.
+      - name: Upload dashboard screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-screenshots
+          path: dashboard*.png
+          if-no-files-found: warn

@@ -117,12 +117,27 @@ browser. After editing anything under `src/`, restart the dev server. Editing
 
 ## Verification
 
-There is no unit-test runner. `screenshot.mjs` is the de-facto verification
-harness: it drives the running server with Playwright, asserts the charts
-populate, captures screenshots, and reports any console errors.
+There is no unit-test runner. `screenshot.ts` is the de-facto verification
+harness: it drives the running server with Playwright, asserts every period
+renders with populated stat cards, captures screenshots, and **exits non-zero**
+on any console error, page error, failed same-origin request, or stat card that
+never fills in.
 
 ```bash
 npx playwright install chromium   # once
 npm run dev &                     # server must be up first
 npm run screenshot                # writes dashboard*.png
 ```
+
+Set `PLAYWRIGHT_CHROMIUM_PATH` to reuse an already-installed browser (handy
+where Playwright's download CDN is unreachable), and `DASHBOARD_URL` to point at
+something other than `http://localhost:3000`.
+
+### CI
+
+`.github/workflows/ci.yml` runs on every push and PR to `main`, on Node 24:
+the TypeScript-only rule is enforced against tracked files, `npm run build`
+type-checks server and client, `npm run import` re-parses the committed
+`weather_data.txt`, and the harness above runs against a live server. The
+screenshots are uploaded as a build artifact, so you can eyeball a UI change
+straight from the PR.

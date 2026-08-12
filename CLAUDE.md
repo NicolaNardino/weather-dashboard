@@ -22,14 +22,25 @@ npm run import       # ts-node src/import.ts — re-parse weather_data.txt into 
 npm run screenshot   # ts-node --transpile-only screenshot.ts — the verification harness (server must be up)
 ```
 
-There is **no test runner or linter configured**. `screenshot.ts` is the de-facto verification harness: it drives the running server with Playwright, asserts charts populate, captures `dashboard*.png`, and reports console errors. Run it against a live server:
+There is **no test runner or linter configured**. `screenshot.ts` is the de-facto verification harness: it drives the running server with Playwright, asserts every period renders with populated stat cards, captures `dashboard*.png`, and **exits non-zero** on any console error, page error, failed same-origin request, or empty stat card. Run it against a live server:
 
 ```bash
 npm run dev &        # server must be up first
 npm run screenshot   # writes dashboard.png / dashboard-month.png / dashboard-year.png
 ```
 
-Playwright needs its browser installed once: `npx playwright install chromium`. Scripts that `import 'playwright'` must run from the project root so `node_modules` resolves.
+Playwright needs its browser installed once: `npx playwright install chromium`. Scripts that `import 'playwright'` must run from the project root so `node_modules` resolves. Two env vars help in constrained environments: `PLAYWRIGHT_CHROMIUM_PATH` points the harness at an already-installed browser (when Playwright's CDN is unreachable), and `DASHBOARD_URL` overrides `http://localhost:3000`.
+
+## CI
+
+`.github/workflows/ci.yml` runs on push / PR to `main` under **Node 24** (matching the `node:sqlite` requirement):
+
+1. **No plain JavaScript in source** — fails if any `.js`/`.mjs`/`.cjs` file is tracked by git, enforcing the rule at the top of this file. The generated `public/app.js` is gitignored, so it doesn't trip the check.
+2. **`npm run build`** — `tsc` for the server and the client bundle. With no separate linter or `typecheck` script, this is the type-check gate.
+3. **`npm run import`** — parses the committed `weather_data.txt`, catching parser regressions against real fixture data and giving the server a populated DB.
+4. **End-to-end** — boots `npm start` and runs `npm run screenshot` against it, so a broken dashboard fails the build. The screenshots upload as an artifact (on success *and* failure) for eyeballing UI changes in a PR.
+
+The e2e step loads Bootstrap and Chart.js from a CDN, so a CDN outage will fail the run. That's deliberate — the dashboard genuinely doesn't work without them — but it's the most likely source of a flaky failure.
 
 The dev server binds port 3000. It does not hot-reload TypeScript — after editing anything in `src/`, kill the `ts-node src/server.ts` process and restart `npm run dev`. The front-end is compiled: after editing `src/client/app.ts` run `npm run build:client` (or restart `npm run dev`, which does it) and refresh the browser. Editing the static assets in `public/` (`index.html`, `style.css`) needs only a browser refresh.
 
