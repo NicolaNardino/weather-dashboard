@@ -43,16 +43,25 @@ export function getDb(): DatabaseSync {
   return _db;
 }
 
+// node:sqlite returns loosely-typed records; these two wrappers keep the
+// prepare/cast boilerplate in one place so the queries below stay one-liners.
+type Param = string | number | null;
+
+function all<T>(sql: string, ...params: Param[]): T[] {
+  return getDb().prepare(sql).all(...params) as unknown as T[];
+}
+
+function one<T>(sql: string, ...params: Param[]): T | undefined {
+  return getDb().prepare(sql).get(...params) as unknown as T | undefined;
+}
+
 // Small key/value store for app metadata (e.g. last import timestamp).
 export function setMeta(key: string, value: string): void {
   getDb().prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run(key, value);
 }
 
 export function getMeta(key: string): string | undefined {
-  const row = getDb().prepare('SELECT value FROM meta WHERE key = ?').get(key) as
-    | { value: string }
-    | undefined;
-  return row?.value;
+  return one<{ value: string }>('SELECT value FROM meta WHERE key = ?', key)?.value;
 }
 
 export interface WeatherRow {
@@ -67,15 +76,14 @@ export interface WeatherRow {
 }
 
 export function queryDay(date: string): WeatherRow | undefined {
-  const db = getDb();
-  return db.prepare('SELECT * FROM weather WHERE date = ?').get(date) as unknown as WeatherRow | undefined;
+  return one<WeatherRow>('SELECT * FROM weather WHERE date = ?', date);
 }
 
 export function queryRange(from: string, to: string): WeatherRow[] {
-  const db = getDb();
-  return db.prepare(
-    'SELECT * FROM weather WHERE date >= ? AND date <= ? ORDER BY date'
-  ).all(from, to) as unknown as WeatherRow[];
+  return all<WeatherRow>(
+    'SELECT * FROM weather WHERE date >= ? AND date <= ? ORDER BY date',
+    from, to,
+  );
 }
 
 export function queryMonth(year: number, month: number): WeatherRow[] {
@@ -103,8 +111,7 @@ export function queryWeek(year: number, week: number): WeatherRow[] {
 }
 
 export function queryAllDates(): { date: string }[] {
-  const db = getDb();
-  return db.prepare('SELECT date FROM weather ORDER BY date').all() as unknown as { date: string }[];
+  return all<{ date: string }>('SELECT date FROM weather ORDER BY date');
 }
 
 // --- Public weather service cache (Open-Meteo) ---
@@ -118,12 +125,13 @@ export interface PublicRow {
 }
 
 export function queryPublicRange(location: string, from: string, to: string): PublicRow[] {
-  return getDb().prepare(
+  return all<PublicRow>(
     `SELECT date, temp_high, temp_low, wind_high, precip
        FROM public_weather
       WHERE location = ? AND date >= ? AND date <= ?
-      ORDER BY date`
-  ).all(location, from, to) as unknown as PublicRow[];
+      ORDER BY date`,
+    location, from, to,
+  );
 }
 
 export function upsertPublic(location: string, rows: PublicRow[]): void {
@@ -142,38 +150,34 @@ export function upsertPublic(location: string, rows: PublicRow[]): void {
 export function aggregateStats(rows: WeatherRow[]) {
   if (!rows.length) return null;
 
-  const avg = (vals: number[]) => vals.reduce((a, b) => a + b, 0) / vals.length;
-  const sum = (vals: number[]) => vals.reduce((a, b) => a + b, 0);
+  const sum = (pick: (r: WeatherRow) => number) => rows.reduce((a, r) => a + pick(r), 0);
+  const round = (n: number, dp = 1) => Math.round(n * 10 ** dp) / 10 ** dp;
+  const max = (pick: (r: WeatherRow) => number) => Math.max(...rows.map(pick));
+  const min = (pick: (r: WeatherRow) => number) => Math.min(...rows.map(pick));
+  const avg = (pick: (r: WeatherRow) => number, dp = 1) => round(sum(pick) / rows.length, dp);
+
+  // high/avg/low triple over three columns of the same measure.
+  const triple = (
+    high: (r: WeatherRow) => number,
+    mean: (r: WeatherRow) => number,
+    low: (r: WeatherRow) => number,
+    dp = 1,
+  ) => ({ high: max(high), avg: avg(mean, dp), low: min(low) });
 
   return {
     count: rows.length,
-    temp: {
-      high: Math.max(...rows.map(r => r.temp_high)),
-      avg:  Math.round(avg(rows.map(r => r.temp_avg)) * 10) / 10,
-      low:  Math.min(...rows.map(r => r.temp_low)),
-    },
-    humidity: {
-      high: Math.max(...rows.map(r => r.hum_high)),
-      avg:  Math.round(avg(rows.map(r => r.hum_avg)) * 10) / 10,
-      low:  Math.min(...rows.map(r => r.hum_low)),
-    },
+    temp: triple(r => r.temp_high, r => r.temp_avg, r => r.temp_low),
+    humidity: triple(r => r.hum_high, r => r.hum_avg, r => r.hum_low),
     wind: {
-      high: Math.max(...rows.map(r => r.wind_high)),
-      avg:  Math.round(avg(rows.map(r => r.wind_avg)) * 10) / 10,
+      high: max(r => r.wind_high),
+      avg: avg(r => r.wind_avg),
     },
-    pressure: {
-      high: Math.max(...rows.map(r => r.pres_high)),
-      avg:  Math.round(avg(rows.map(r => r.pres_high).map((h, i) => (h + rows[i].pres_low) / 2)) * 100) / 100,
-      low:  Math.min(...rows.map(r => r.pres_low)),
-    },
-    dew: {
-      high: Math.max(...rows.map(r => r.dew_high)),
-      avg:  Math.round(avg(rows.map(r => r.dew_avg)) * 10) / 10,
-      low:  Math.min(...rows.map(r => r.dew_low)),
-    },
+    // No stored pressure average — use the midpoint of each day's high/low.
+    pressure: triple(r => r.pres_high, r => (r.pres_high + r.pres_low) / 2, r => r.pres_low, 2),
+    dew: triple(r => r.dew_high, r => r.dew_avg, r => r.dew_low),
     precip: {
-      total: Math.round(sum(rows.map(r => r.precip)) * 100) / 100,
-      max:   Math.max(...rows.map(r => r.precip)),
+      total: round(sum(r => r.precip), 2),
+      max: max(r => r.precip),
       rainy_days: rows.filter(r => r.precip > 0).length,
     },
   };

@@ -1,6 +1,6 @@
-import express from 'express';
+import express, { RequestHandler } from 'express';
 import path from 'path';
-import { importFile } from './import';
+import { importFile, DATA_FILE } from './import';
 import {
   queryDay, queryWeek, queryMonth, queryYear, queryRange,
   queryAllDates, aggregateStats, getMeta, WeatherRow,
@@ -44,6 +44,24 @@ async function fetchOpenMeteo(from: string, to: string): Promise<PublicRow[]> {
   }));
 }
 
+// Every period route has the same shape: require a few query params, look the
+// matching rows up, answer { rows, stats }. This wraps that so each route below
+// is just its parameter names plus its lookup.
+function rowsRoute(
+  params: string[],
+  lookup: (q: Record<string, string>) => WeatherRow[],
+): RequestHandler {
+  return (req, res) => {
+    const q = req.query as Record<string, string>;
+    if (params.some(p => !q[p])) {
+      res.status(400).json({ error: `${params.join(' and ')} required` });
+      return;
+    }
+    const rows = lookup(q);
+    res.json({ rows, stats: aggregateStats(rows) });
+  };
+}
+
 const app = express();
 const PORT = process.env.PORT ?? 3000;
 
@@ -76,43 +94,33 @@ app.get('/api/compare', async (req, res) => {
   const cached = queryPublicRange(BAAR.label, from, to);
   const cachedDates = new Set(cached.map(r => r.date));
 
+  // All three answers below share the same envelope; only the public rows and
+  // the freshness flags differ.
+  const reply = (pub: PublicRow[], flags: Record<string, unknown>) =>
+    res.json({
+      location: BAAR.label,
+      source: 'Open-Meteo',
+      mine: queryRange(from, to),
+      public: pub,
+      ...flags,
+    });
+
   // Today/future are forecasts that keep changing — never trust the cache for
   // them. Past days are stable, so a cache hit means we can skip the network.
   const hasVolatile = wanted.some(d => d >= today);
   const missing = wanted.filter(d => d < today && !cachedDates.has(d));
 
-  if (!missing.length && !hasVolatile) {
-    return res.json({
-      location: BAAR.label,
-      source: 'Open-Meteo',
-      cached: true,
-      mine: queryRange(from, to),
-      public: cached,
-    });
-  }
+  if (!missing.length && !hasVolatile) return reply(cached, { cached: true });
 
   try {
     const fetched = await fetchOpenMeteo(from, to);
     // Persist only the stable (past) days; leave volatile forecasts uncached.
     upsertPublic(BAAR.label, fetched.filter(r => r.date < today));
-    res.json({
-      location: BAAR.label,
-      source: 'Open-Meteo',
-      cached: false,
-      mine: queryRange(from, to),
-      public: fetched,
-    });
+    reply(fetched, { cached: false });
   } catch (err) {
     // Offline / rate-limited: serve whatever we have cached rather than failing.
     if (cached.length) {
-      return res.json({
-        location: BAAR.label,
-        source: 'Open-Meteo (cached)',
-        cached: true,
-        stale: true,
-        mine: queryRange(from, to),
-        public: cached,
-      });
+      return reply(cached, { cached: true, stale: true, source: 'Open-Meteo (cached)' });
     }
     res.status(502).json({ error: String(err) });
   }
@@ -128,43 +136,21 @@ app.get('/api/day', (req, res) => {
 });
 
 // GET /api/week?year=2026&week=14
-app.get('/api/week', (req, res) => {
-  const { year, week } = req.query as { year?: string; week?: string };
-  if (!year || !week) return res.status(400).json({ error: 'year and week required' });
-  const rows = queryWeek(+year, +week);
-  res.json({ rows, stats: aggregateStats(rows) });
-});
+app.get('/api/week', rowsRoute(['year', 'week'], q => queryWeek(+q.year, +q.week)));
 
 // GET /api/month?year=2026&month=4
-app.get('/api/month', (req, res) => {
-  const { year, month } = req.query as { year?: string; month?: string };
-  if (!year || !month) return res.status(400).json({ error: 'year and month required' });
-  const rows = queryMonth(+year, +month);
-  res.json({ rows, stats: aggregateStats(rows) });
-});
+app.get('/api/month', rowsRoute(['year', 'month'], q => queryMonth(+q.year, +q.month)));
 
 // GET /api/year?year=2026
-app.get('/api/year', (req, res) => {
-  const { year } = req.query as { year?: string };
-  if (!year) return res.status(400).json({ error: 'year required' });
-  const rows = queryYear(+year);
-  res.json({ rows, stats: aggregateStats(rows) });
-});
+app.get('/api/year', rowsRoute(['year'], q => queryYear(+q.year)));
 
 // GET /api/range?from=YYYY-MM-DD&to=YYYY-MM-DD
-app.get('/api/range', (req, res) => {
-  const { from, to } = req.query as { from?: string; to?: string };
-  if (!from || !to) return res.status(400).json({ error: 'from and to required' });
-  const rows: WeatherRow[] = queryRange(from, to);
-  res.json({ rows, stats: aggregateStats(rows) });
-});
+app.get('/api/range', rowsRoute(['from', 'to'], q => queryRange(q.from, q.to)));
 
 // POST /api/import — re-import weather_data.txt (idempotent)
 app.post('/api/import', (_req, res) => {
   try {
-    const dataFile = path.join(process.cwd(), 'weather_data.txt');
-    const result = importFile(dataFile);
-    res.json({ ok: true, ...result });
+    res.json({ ok: true, ...importFile(DATA_FILE) });
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
@@ -174,8 +160,7 @@ app.listen(PORT, () => {
   console.log(`Weather dashboard running at http://localhost:${PORT}`);
   // Auto-import on startup so fresh data is always loaded
   try {
-    const dataFile = path.join(process.cwd(), 'weather_data.txt');
-    const r = importFile(dataFile);
+    const r = importFile(DATA_FILE);
     console.log(
       `Loaded ${r.total} records from weather_data.txt ` +
       `(${r.inserted} new, ${r.updated} updated, ${r.unchanged} unchanged)`,
