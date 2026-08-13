@@ -61,18 +61,17 @@ export function importFile(filePath: string): ImportResult {
     const values = FIELDS.map((_, i) => parseNum(cols[i + 1]));
 
     const prev = existing.get(date);
+    result.total++;
     if (!prev) {
       result.inserted++;
     } else if (FIELDS.some((f, i) => prev[f] !== values[i])) {
       result.updated++;
     } else {
       result.unchanged++;
-      result.total++;
       continue; // nothing to write for an identical row
     }
 
     insert.run(date, ...values);
-    result.total++;
   }
 
   // Record when this import ran so the UI can show data freshness.

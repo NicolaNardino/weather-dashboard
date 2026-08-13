@@ -43,16 +43,21 @@ export function getDb(): DatabaseSync {
   return _db;
 }
 
+// node:sqlite types rows as its own record shape, so every read needs the same
+// double cast; these two wrappers keep it in one place.
+type Param = string | number;
+const all = <T>(sql: string, ...params: Param[]): T[] =>
+  getDb().prepare(sql).all(...params) as unknown as T[];
+const one = <T>(sql: string, ...params: Param[]): T | undefined =>
+  getDb().prepare(sql).get(...params) as unknown as T | undefined;
+
 // Small key/value store for app metadata (e.g. last import timestamp).
 export function setMeta(key: string, value: string): void {
   getDb().prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run(key, value);
 }
 
 export function getMeta(key: string): string | undefined {
-  const row = getDb().prepare('SELECT value FROM meta WHERE key = ?').get(key) as
-    | { value: string }
-    | undefined;
-  return row?.value;
+  return one<{ value: string }>('SELECT value FROM meta WHERE key = ?', key)?.value;
 }
 
 export interface WeatherRow {
@@ -67,15 +72,13 @@ export interface WeatherRow {
 }
 
 export function queryDay(date: string): WeatherRow | undefined {
-  const db = getDb();
-  return db.prepare('SELECT * FROM weather WHERE date = ?').get(date) as unknown as WeatherRow | undefined;
+  return one<WeatherRow>('SELECT * FROM weather WHERE date = ?', date);
 }
 
 export function queryRange(from: string, to: string): WeatherRow[] {
-  const db = getDb();
-  return db.prepare(
-    'SELECT * FROM weather WHERE date >= ? AND date <= ? ORDER BY date'
-  ).all(from, to) as unknown as WeatherRow[];
+  return all<WeatherRow>(
+    'SELECT * FROM weather WHERE date >= ? AND date <= ? ORDER BY date', from, to,
+  );
 }
 
 export function queryMonth(year: number, month: number): WeatherRow[] {
@@ -103,8 +106,7 @@ export function queryWeek(year: number, week: number): WeatherRow[] {
 }
 
 export function queryAllDates(): { date: string }[] {
-  const db = getDb();
-  return db.prepare('SELECT date FROM weather ORDER BY date').all() as unknown as { date: string }[];
+  return all<{ date: string }>('SELECT date FROM weather ORDER BY date');
 }
 
 // --- Public weather service cache (Open-Meteo) ---
@@ -118,12 +120,13 @@ export interface PublicRow {
 }
 
 export function queryPublicRange(location: string, from: string, to: string): PublicRow[] {
-  return getDb().prepare(
+  return all<PublicRow>(
     `SELECT date, temp_high, temp_low, wind_high, precip
        FROM public_weather
       WHERE location = ? AND date >= ? AND date <= ?
-      ORDER BY date`
-  ).all(location, from, to) as unknown as PublicRow[];
+      ORDER BY date`,
+    location, from, to,
+  );
 }
 
 export function upsertPublic(location: string, rows: PublicRow[]): void {
