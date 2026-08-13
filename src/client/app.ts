@@ -33,6 +33,9 @@ interface PublicRow {
   precip: number | null;
 }
 
+/** The measures both my rows and the public ones carry — the Compare axis. */
+type SharedKey = Exclude<keyof WeatherRow & keyof PublicRow, 'date'>;
+
 const CHART_DEFAULTS = {
   responsive: true,
   animation: false,
@@ -66,19 +69,28 @@ function line(label: string, data: (number | string | null)[], color: string, ex
   };
 }
 
+/** createElement + property assignment + children, in one expression. */
+function mkEl<K extends keyof HTMLElementTagNameMap>(
+  tag: K,
+  props: Partial<HTMLElementTagNameMap[K]> = {},
+  children: (Node | string)[] = [],
+): HTMLElementTagNameMap[K] {
+  const node = Object.assign(document.createElement(tag), props);
+  children.forEach(c => node.append(c));
+  return node;
+}
+
 /** A <select> built from value/label pairs, optionally pre-selected. */
 function mkSelect(
   options: { value: string; label: string }[],
   selected?: string,
   onChange?: () => void,
 ): HTMLSelectElement {
-  const sel = document.createElement('select');
-  options.forEach(o => {
-    const el = document.createElement('option');
-    el.value = o.value;
-    el.textContent = o.label;
-    sel.appendChild(el);
-  });
+  const sel = mkEl(
+    'select',
+    {},
+    options.map(o => mkEl('option', { value: o.value, textContent: o.label })),
+  );
   if (selected !== undefined) sel.value = selected;
   if (onChange) sel.addEventListener('change', onChange);
   return sel;
@@ -136,30 +148,23 @@ function renderControls(): void {
     // From defaults to the last ~30 available days for a sensible window.
     const fromSel = mkSelect(asOptions(dates), dates[Math.max(0, dates.length - 30)], load);
     const toSel = mkSelect(asOptions(dates), dates[dates.length - 1], load);
-    const fromLbl = document.createElement('span'); fromLbl.className = 'text-muted small'; fromLbl.textContent = 'From';
-    const toLbl = document.createElement('span'); toLbl.className = 'text-muted small'; toLbl.textContent = 'To';
+    const label = (text: string) => mkEl('span', { className: 'text-muted small', textContent: text });
 
     // "All" checkbox — when checked, span the entire dataset and disable the
     // From/To pickers since the window is no longer user-controlled.
-    const allWrap = document.createElement('label');
-    allWrap.className = 'text-muted small d-flex align-items-center gap-1 mb-0';
-    const allChk = document.createElement('input');
-    allChk.type = 'checkbox';
-    allChk.id = 'range-all';
-    allChk.className = 'form-check-input mt-0';
-    allWrap.appendChild(allChk);
-    allWrap.appendChild(document.createTextNode('All'));
+    const allChk = mkEl('input', { type: 'checkbox', id: 'range-all', className: 'form-check-input mt-0' });
+    const allWrap = mkEl(
+      'label',
+      { className: 'text-muted small d-flex align-items-center gap-1 mb-0' },
+      [allChk, 'All'],
+    );
     allChk.addEventListener('change', () => {
       fromSel.disabled = allChk.checked;
       toSel.disabled = allChk.checked;
       load();
     });
 
-    el.appendChild(allWrap);
-    el.appendChild(fromLbl);
-    el.appendChild(fromSel);
-    el.appendChild(toLbl);
-    el.appendChild(toSel);
+    el.append(allWrap, label('From'), fromSel, label('To'), toSel);
   }
 }
 
@@ -292,13 +297,11 @@ let chartVisibility: Record<string, boolean> = loadChartVisibility();
 
 function applyChartVisibility(): void {
   CHART_META.forEach(c => {
-    const col = document.querySelector<HTMLElement>(`[data-chart="${c.key}"]`);
-    if (col) col.classList.toggle('d-none', !chartVisibility[c.key]);
-  });
-  // Charts that just became visible were sized to a hidden (0-width) canvas;
-  // nudge Chart.js to re-measure now that the column has real dimensions.
-  CHART_META.forEach(c => {
-    if (chartVisibility[c.key]) charts[`chart-${c.key}`]?.resize();
+    const visible = chartVisibility[c.key];
+    document.querySelector<HTMLElement>(`[data-chart="${c.key}"]`)?.classList.toggle('d-none', !visible);
+    // A chart that just became visible was sized to a hidden (0-width) canvas;
+    // nudge Chart.js to re-measure now that the column has real dimensions.
+    if (visible) charts[`chart-${c.key}`]?.resize();
   });
 }
 
@@ -307,10 +310,7 @@ function renderChartToggles(): void {
   if (!el) return;
   el.innerHTML = '';
   CHART_META.forEach(c => {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'btn btn-outline-secondary';
-    btn.textContent = c.label;
+    const btn = mkEl('button', { type: 'button', className: 'btn btn-outline-secondary', textContent: c.label });
     const sync = () => {
       btn.classList.toggle('active', chartVisibility[c.key]);
       btn.setAttribute('aria-pressed', String(chartVisibility[c.key]));
@@ -469,20 +469,20 @@ async function loadCompare(): Promise<void> {
   // Align public rows to my dates so both series share the same x-axis.
   const pub = new Map<string, PublicRow>(data.public.map(p => [p.date, p]));
   const lbl = labels(lastRows);
-  const mineOf = (key: keyof WeatherRow) => lastRows.map(r => r[key]);
-  const pubOf  = (key: keyof PublicRow) => lastRows.map(r => pub.get(r.date)?.[key] ?? null);
+  const mineOf = (key: SharedKey) => lastRows.map(r => r[key] as number);
+  const pubOf  = (key: SharedKey) => lastRows.map(r => (pub.get(r.date)?.[key] ?? null) as number | null);
 
-  const pair = (label: string, mineKey: keyof WeatherRow, pubKey: keyof PublicRow) => ({
+  const pair = (label: string, key: SharedKey) => ({
     labels: lbl,
     datasets: [
-      line(`Me · ${label}`,   mineOf(mineKey), '#38bdf8'),
-      line(`Baar · ${label}`, pubOf(pubKey),  '#fb923c', { borderDash: [5, 3] }),
+      line(`Me · ${label}`,   mineOf(key), '#38bdf8'),
+      line(`Baar · ${label}`, pubOf(key),  '#fb923c', { borderDash: [5, 3] }),
     ],
   });
 
-  mkChart('cmp-temp-high', 'line', pair('High', 'temp_high', 'temp_high'));
-  mkChart('cmp-temp-low',  'line', pair('Low',  'temp_low',  'temp_low'));
-  mkChart('cmp-wind',      'line', pair('Wind', 'wind_high', 'wind_high'));
+  mkChart('cmp-temp-high', 'line', pair('High', 'temp_high'));
+  mkChart('cmp-temp-low',  'line', pair('Low',  'temp_low'));
+  mkChart('cmp-wind',      'line', pair('Wind', 'wind_high'));
   mkChart('cmp-precip', 'bar', {
     labels: lbl,
     datasets: [
@@ -491,15 +491,18 @@ async function loadCompare(): Promise<void> {
     ],
   });
 
-  renderCompareSummary(pub);
+  renderCompareSummary(mineOf, pubOf);
 }
 
-function renderCompareSummary(pub: Map<string, PublicRow>): void {
+function renderCompareSummary(
+  mineOf: (key: SharedKey) => number[],
+  pubOf: (key: SharedKey) => (number | null)[],
+): void {
   const avg = (vals: (number | null)[]): number | null => {
     const v = vals.filter((x): x is number => x != null && !Number.isNaN(x));
     return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
   };
-  const rows: [string, keyof WeatherRow & keyof PublicRow][] = [
+  const rows: [string, SharedKey][] = [
     ['Temp High (°C)', 'temp_high'],
     ['Temp Low (°C)',  'temp_low'],
     ['Wind Max (km/h)','wind_high'],
@@ -508,8 +511,8 @@ function renderCompareSummary(pub: Map<string, PublicRow>): void {
   const fmt = (n: number | null) => (n == null ? '—' : n.toFixed(1));
 
   document.getElementById('cmp-summary-body')!.innerHTML = rows.map(([name, key]) => {
-    const mine = avg(lastRows.map(r => r[key] as number));
-    const theirs = avg(lastRows.map(r => (pub.get(r.date)?.[key] ?? null) as number | null));
+    const mine = avg(mineOf(key));
+    const theirs = avg(pubOf(key));
     const diff = (mine != null && theirs != null) ? mine - theirs : null;
     const diffCls = diff == null ? '' : diff > 0 ? 'text-danger' : diff < 0 ? 'text-info' : '';
     const diffTxt = diff == null ? '—' : `${diff > 0 ? '+' : ''}${diff.toFixed(1)}`;
