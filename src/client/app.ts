@@ -50,9 +50,15 @@ const CHART_DEFAULTS = {
 // compare `cmp-*` alike). Rebuilding one destroys the instance it replaces.
 const charts: Record<string, any> = {};
 
+/** Tear down the chart on `id`, if any — Chart.js leaks the canvas otherwise. */
+function destroyChart(id: string): void {
+  charts[id]?.destroy();
+  delete charts[id];
+}
+
 function mkChart(id: string, type: string, data: any, extraOpts: any = {}): void {
   const ctx = document.getElementById(id);
-  if (charts[id]) charts[id].destroy();
+  destroyChart(id);
   charts[id] = new Chart(ctx, { type, data, options: { ...CHART_DEFAULTS, ...extraOpts } });
 }
 
@@ -195,6 +201,20 @@ function isoWeek(d: Date): number {
   return Math.ceil((diff / 86400000 + (jan4.getDay() || 7)) / 7);
 }
 
+/**
+ * Re-read the available dates, then rebuild the controls and everything they
+ * drive. The startup path and the Import button both need exactly this, and
+ * both used to spell it out — so a step added to one could go missing in the
+ * other.
+ */
+async function reloadDates(): Promise<void> {
+  const resp = await fetch('/api/dates');
+  allDates = await resp.json() as DateRow[];
+  renderControls();
+  await load();
+  await refreshStatus();
+}
+
 // --- Load data ---
 async function load(): Promise<void> {
   const el = document.getElementById('controls')!;
@@ -248,24 +268,27 @@ async function refreshStatus(): Promise<void> {
 }
 
 // --- Stats cards ---
+// Each measure fills the cards `s-<prefix>-<high|avg|low>` from the like-named
+// keys of its stats group, so the card ids and the API shape line up by
+// construction instead of through sixteen hand-written pairings.
+const STAT_GROUPS: { prefix: string; pick: (s: Stats) => Record<string, number>; unit: string }[] = [
+  { prefix: 'temp',  pick: s => s.temp,     unit: '°C' },
+  { prefix: 'hum',   pick: s => s.humidity, unit: '%' },
+  { prefix: 'wind',  pick: s => s.wind,     unit: 'km/h' },
+  { prefix: 'pres',  pick: s => s.pressure, unit: 'hPa' },
+  { prefix: 'dew',   pick: s => s.dew,      unit: '°C' },
+];
+
 function renderStats(s: Stats | undefined): void {
   if (!s) return;
-  setText('s-temp-avg',    `${s.temp.avg} °C`);
-  setText('s-temp-high',   `${s.temp.high} °C`);
-  setText('s-temp-low',    `${s.temp.low} °C`);
-  setText('s-hum-avg',     `${s.humidity.avg} %`);
-  setText('s-hum-high',    `${s.humidity.high} %`);
-  setText('s-hum-low',     `${s.humidity.low} %`);
-  setText('s-wind-high',   `${s.wind.high} km/h`);
-  setText('s-wind-avg',    `${s.wind.avg} km/h`);
-  setText('s-pres-avg',    `${s.pressure.avg} hPa`);
-  setText('s-pres-high',   `${s.pressure.high} hPa`);
-  setText('s-pres-low',    `${s.pressure.low} hPa`);
-  setText('s-precip-total',`${s.precip.total} mm`);
-  setText('s-precip-rainy',s.precip.rainy_days);
-  setText('s-dew-avg',     `${s.dew.avg} °C`);
-  setText('s-dew-high',    `${s.dew.high} °C`);
-  setText('s-dew-low',     `${s.dew.low} °C`);
+  for (const { prefix, pick, unit } of STAT_GROUPS) {
+    for (const [key, value] of Object.entries(pick(s))) {
+      setText(`s-${prefix}-${key}`, `${value} ${unit}`);
+    }
+  }
+  // Precipitation is the odd one out: a total and a day count, not high/avg/low.
+  setText('s-precip-total', `${s.precip.total} mm`);
+  setText('s-precip-rainy', s.precip.rainy_days);
 }
 
 function setText(id: string, val: string | number): void {
@@ -401,10 +424,7 @@ function renderTable(rows: WeatherRow[]): void {
 }
 
 function clearAll(): void {
-  CHART_META.forEach(({ key }) => {
-    const id = `chart-${key}`;
-    if (charts[id]) { charts[id].destroy(); delete charts[id]; }
-  });
+  CHART_META.forEach(({ key }) => destroyChart(`chart-${key}`));
   document.getElementById('table-body')!.innerHTML = '';
 }
 
@@ -419,12 +439,7 @@ importBtn.addEventListener('click', async () => {
     // Report what actually changed, not just the row count in the file.
     importBtn.textContent = `✓ ${j.inserted} new · ${j.updated} upd`;
     importBtn.title = `${j.total} rows processed — ${j.inserted} new, ${j.updated} updated, ${j.unchanged} unchanged`;
-    // refresh dates and reload
-    const resp = await fetch('/api/dates');
-    allDates = await resp.json() as DateRow[];
-    renderControls();
-    await load();
-    await refreshStatus();
+    await reloadDates();
   } catch (e) {
     importBtn.textContent = '✗ Error';
   } finally {
@@ -522,11 +537,7 @@ function renderCompareSummary(
 
 // --- Init ---
 (async () => {
-  const resp = await fetch('/api/dates');
-  allDates = await resp.json() as DateRow[];
   renderChartToggles();
   applyChartVisibility();   // apply persisted hidden state immediately, even before charts render
-  renderControls();
-  await load();
-  await refreshStatus();
+  await reloadDates();
 })();
