@@ -35,12 +35,18 @@ async function fetchOpenMeteo(from: string, to: string): Promise<PublicRow[]> {
   const d = j.daily ?? {};
   const time = (d.time as string[]) ?? [];
 
+  // Open-Meteo returns each measure as its own parallel array; a measure the
+  // API omitted is missing rather than null, so every read needs the same
+  // cast-and-default.
+  const at = (measure: string, i: number): number | null =>
+    (d[measure] as number[] | undefined)?.[i] ?? null;
+
   return time.map((date, i) => ({
     date,
-    temp_high: (d.temperature_2m_max as number[])?.[i] ?? null,
-    temp_low: (d.temperature_2m_min as number[])?.[i] ?? null,
-    wind_high: (d.wind_speed_10m_max as number[])?.[i] ?? null,
-    precip: (d.precipitation_sum as number[])?.[i] ?? null,
+    temp_high: at('temperature_2m_max', i),
+    temp_low: at('temperature_2m_min', i),
+    wind_high: at('wind_speed_10m_max', i),
+    precip: at('precipitation_sum', i),
   }));
 }
 
