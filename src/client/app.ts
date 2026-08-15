@@ -296,16 +296,61 @@ function setText(id: string, val: string | number): void {
   if (el) el.textContent = String(val);
 }
 
-// --- Chart visibility ---
-// Each dashboard chart can be toggled on/off. Hiding one removes its whole
-// grid column so the remaining charts reflow to fill the row. The choice is
-// persisted in localStorage so it survives reloads.
-const CHART_META: { key: string; label: string }[] = [
-  { key: 'temp',   label: 'Temperature' },
-  { key: 'precip', label: 'Precipitation' },
-  { key: 'hum',    label: 'Humidity' },
-  { key: 'pres',   label: 'Pressure' },
-  { key: 'wind',   label: 'Wind' },
+// --- The dashboard charts ---
+// One entry per chart: its canvas (`chart-<key>`), its toggle-button label, and
+// how to turn a period's rows into datasets. Both the toggles and the rendering
+// walk this list, so a chart can't end up drawn but untoggleable (or vice
+// versa). Each can be toggled off, which removes its whole grid column so the
+// rest reflow to fill the row; the choice persists in localStorage.
+interface ChartSpec {
+  key: string;
+  label: string;
+  type: string;
+  datasets: (rows: WeatherRow[]) => any[];
+  /** Chart-specific option overrides merged over CHART_DEFAULTS. */
+  opts?: any;
+}
+
+const CHART_META: ChartSpec[] = [
+  {
+    key: 'temp', label: 'Temperature', type: 'line',
+    datasets: rows => [
+      line('High', rows.map(r => r.temp_high), '#f87272'),
+      line('Avg',  rows.map(r => r.temp_avg),  '#facc15'),
+      line('Low',  rows.map(r => r.temp_low),  '#60a5fa'),
+      line('Dew',  rows.map(r => r.dew_avg),   '#4ade80', { borderDash: [4, 3] }),
+    ],
+  },
+  {
+    key: 'precip', label: 'Precipitation', type: 'bar',
+    datasets: rows => [
+      { label: 'Precip', data: rows.map(r => r.precip), backgroundColor: '#60a5fa99' },
+    ],
+  },
+  {
+    key: 'hum', label: 'Humidity', type: 'line',
+    datasets: rows => [
+      line('High', rows.map(r => r.hum_high), '#f87272', { backgroundColor: '#f8727211', fill: true }),
+      line('Avg',  rows.map(r => r.hum_avg),  '#facc15'),
+      line('Low',  rows.map(r => r.hum_low),  '#60a5fa', { backgroundColor: '#60a5fa11', fill: true }),
+    ],
+    // Humidity is a percentage, so pin the axis rather than letting it autoscale.
+    opts: { scales: { ...CHART_DEFAULTS.scales, y: { ...CHART_DEFAULTS.scales.y, min: 0, max: 100 } } },
+  },
+  {
+    key: 'pres', label: 'Pressure', type: 'line',
+    datasets: rows => [
+      line('High', rows.map(r => r.pres_high), '#a78bfa'),
+      line('Low',  rows.map(r => r.pres_low),  '#818cf8', { backgroundColor: '#818cf811', fill: true }),
+    ],
+  },
+  {
+    key: 'wind', label: 'Wind', type: 'line',
+    datasets: rows => [
+      line('High', rows.map(r => r.wind_high), '#fb923c', { backgroundColor: '#fb923c11', fill: true }),
+      line('Avg',  rows.map(r => r.wind_avg),  '#fdba74'),
+    ],
+  },
 ];
 
 function loadChartVisibility(): Record<string, boolean> {
@@ -356,49 +401,9 @@ function labels(rows: WeatherRow[]): string[] {
 
 function renderCharts(rows: WeatherRow[]): void {
   const lbl = labels(rows);
-
-  mkChart('chart-temp', 'line', {
-    labels: lbl,
-    datasets: [
-      line('High', rows.map(r => r.temp_high), '#f87272'),
-      line('Avg',  rows.map(r => r.temp_avg),  '#facc15'),
-      line('Low',  rows.map(r => r.temp_low),  '#60a5fa'),
-      line('Dew',  rows.map(r => r.dew_avg),   '#4ade80', { borderDash: [4, 3] }),
-    ],
-  });
-
-  mkChart('chart-precip', 'bar', {
-    labels: lbl,
-    datasets: [
-      { label: 'Precip', data: rows.map(r => r.precip), backgroundColor: '#60a5fa99' },
-    ],
-  });
-
-  mkChart('chart-hum', 'line', {
-    labels: lbl,
-    datasets: [
-      line('High', rows.map(r => r.hum_high), '#f87272', { backgroundColor: '#f8727211', fill: true }),
-      line('Avg',  rows.map(r => r.hum_avg),  '#facc15'),
-      line('Low',  rows.map(r => r.hum_low),  '#60a5fa', { backgroundColor: '#60a5fa11', fill: true }),
-    ],
-  }, { scales: { ...CHART_DEFAULTS.scales, y: { ...CHART_DEFAULTS.scales.y, min: 0, max: 100 } } });
-
-  mkChart('chart-pres', 'line', {
-    labels: lbl,
-    datasets: [
-      line('High', rows.map(r => r.pres_high), '#a78bfa'),
-      line('Low',  rows.map(r => r.pres_low),  '#818cf8', { backgroundColor: '#818cf811', fill: true }),
-    ],
-  });
-
-  mkChart('chart-wind', 'line', {
-    labels: lbl,
-    datasets: [
-      line('High', rows.map(r => r.wind_high), '#fb923c', { backgroundColor: '#fb923c11', fill: true }),
-      line('Avg',  rows.map(r => r.wind_avg),  '#fdba74'),
-    ],
-  });
-
+  for (const c of CHART_META) {
+    mkChart(`chart-${c.key}`, c.type, { labels: lbl, datasets: c.datasets(rows) }, c.opts);
+  }
   applyChartVisibility();
 }
 
