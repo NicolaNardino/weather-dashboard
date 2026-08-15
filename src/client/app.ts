@@ -105,17 +105,104 @@ function mkSelect(
 /** Value/label pairs where both are the same string (dates, years). */
 const asOptions = (values: string[]) => values.map(v => ({ value: v, label: v }));
 
+const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+/**
+ * One entry per period selector. `controls` populates the header with that
+ * period's pickers; `url` turns whatever those pickers now hold into the API
+ * call. Keeping the pair together means the `period` string is dispatched once
+ * rather than in two `if/else` chains that had to stay in step — a new period
+ * is one entry, not two branches in two places.
+ */
+interface PeriodSpec {
+  controls: (el: HTMLElement, dates: string[]) => void;
+  url: (sels: HTMLSelectElement[]) => string;
+}
+
+const PERIODS = {
+  day: {
+    controls: (el, dates) => el.append(mkSelect(asOptions(dates), dates[dates.length - 1], load)),
+    url: s => `/api/day?date=${s[0]?.value ?? ''}`,
+  },
+
+  week: {
+    controls: el => {
+      const weeks = Array.from({ length: 53 }, (_, i) => ({
+        value: String(i + 1),
+        label: `Week ${i + 1}`,
+      }));
+      el.append(yearSelect(), mkSelect(weeks, String(isoWeek(refDate())), load));
+    },
+    url: s => `/api/week?year=${s[0]?.value}&week=${s[1]?.value}`,
+  },
+
+  month: {
+    controls: el => {
+      const months = MONTH_NAMES.map((n, i) => ({ value: String(i + 1), label: n }));
+      el.append(yearSelect(), mkSelect(months, String(refDate().getMonth() + 1), load));
+    },
+    url: s => `/api/month?year=${s[0]?.value}&month=${s[1]?.value}`,
+  },
+
+  year: {
+    controls: el => el.append(yearSelect()),
+    url: s => `/api/year?year=${s[0]?.value}`,
+  },
+
+  range: {
+    // Two date pickers populated ONLY from dates that exist in the data,
+    // so the user can never select a window outside the recorded range.
+    // From defaults to the last ~30 available days for a sensible window.
+    controls: (el, dates) => {
+      const fromSel = mkSelect(asOptions(dates), dates[Math.max(0, dates.length - 30)], load);
+      const toSel = mkSelect(asOptions(dates), dates[dates.length - 1], load);
+      const label = (text: string) => mkEl('span', { className: 'text-muted small', textContent: text });
+
+      // "All" checkbox — when checked, span the entire dataset and disable the
+      // From/To pickers since the window is no longer user-controlled.
+      const allChk = mkEl('input', { type: 'checkbox', id: 'range-all', className: 'form-check-input mt-0' });
+      const allWrap = mkEl(
+        'label',
+        { className: 'text-muted small d-flex align-items-center gap-1 mb-0' },
+        [allChk, 'All'],
+      );
+      allChk.addEventListener('change', () => {
+        fromSel.disabled = allChk.checked;
+        toSel.disabled = allChk.checked;
+        load();
+      });
+
+      el.append(allWrap, label('From'), fromSel, label('To'), toSel);
+    },
+    url: s => {
+      let from: string | undefined, to: string | undefined;
+      if ((document.getElementById('range-all') as HTMLInputElement | null)?.checked && allDates.length) {
+        from = allDates[0].date;                       // whole dataset
+        to = allDates[allDates.length - 1].date;
+      } else {
+        from = s[0]?.value; to = s[1]?.value;
+        if (from && to && from > to) [from, to] = [to, from]; // tolerate reversed picks
+      }
+      return `/api/range?from=${from}&to=${to}`;
+    },
+  },
+} satisfies Record<string, PeriodSpec>;
+
+type Period = keyof typeof PERIODS;
+
 // --- State ---
-let period = 'week';
+let period: Period = 'week';
 let allDates: DateRow[] = [];
 let lastRows: WeatherRow[] = [];   // rows from the most recent dashboard load (drives Compare range)
 
 // --- Nav tabs ---
 document.querySelectorAll<HTMLElement>('[data-period]').forEach(btn => {
   btn.addEventListener('click', () => {
+    const next = btn.dataset.period as Period;
+    if (!PERIODS[next]) return;   // a button whose period we don't implement
     document.querySelectorAll<HTMLElement>('[data-period]').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
-    period = btn.dataset.period!;
+    period = next;
     renderControls();
     load();
   });
@@ -125,53 +212,7 @@ document.querySelectorAll<HTMLElement>('[data-period]').forEach(btn => {
 function renderControls(): void {
   const el = document.getElementById('controls')!;
   el.innerHTML = '';
-
-  const dates = allDates.map(d => d.date);
-
-  if (period === 'day') {
-    el.appendChild(mkSelect(asOptions(dates), dates[dates.length - 1], load));
-
-  } else if (period === 'week') {
-    const weeks = Array.from({ length: 53 }, (_, i) => ({
-      value: String(i + 1),
-      label: `Week ${i + 1}`,
-    }));
-    el.appendChild(yearSelect());
-    el.appendChild(mkSelect(weeks, String(isoWeek(refDate())), load));
-
-  } else if (period === 'month') {
-    const names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    const months = names.map((n, i) => ({ value: String(i + 1), label: n }));
-    el.appendChild(yearSelect());
-    el.appendChild(mkSelect(months, String(refDate().getMonth() + 1), load));
-
-  } else if (period === 'year') {
-    el.appendChild(yearSelect());
-
-  } else if (period === 'range') {
-    // Two date pickers populated ONLY from dates that exist in the data,
-    // so the user can never select a window outside the recorded range.
-    // From defaults to the last ~30 available days for a sensible window.
-    const fromSel = mkSelect(asOptions(dates), dates[Math.max(0, dates.length - 30)], load);
-    const toSel = mkSelect(asOptions(dates), dates[dates.length - 1], load);
-    const label = (text: string) => mkEl('span', { className: 'text-muted small', textContent: text });
-
-    // "All" checkbox — when checked, span the entire dataset and disable the
-    // From/To pickers since the window is no longer user-controlled.
-    const allChk = mkEl('input', { type: 'checkbox', id: 'range-all', className: 'form-check-input mt-0' });
-    const allWrap = mkEl(
-      'label',
-      { className: 'text-muted small d-flex align-items-center gap-1 mb-0' },
-      [allChk, 'All'],
-    );
-    allChk.addEventListener('change', () => {
-      fromSel.disabled = allChk.checked;
-      toSel.disabled = allChk.checked;
-      load();
-    });
-
-    el.append(allWrap, label('From'), fromSel, label('To'), toSel);
-  }
+  PERIODS[period].controls(el, allDates.map(d => d.date));
 }
 
 function yearSelect(): HTMLSelectElement {
@@ -217,31 +258,8 @@ async function reloadDates(): Promise<void> {
 
 // --- Load data ---
 async function load(): Promise<void> {
-  const el = document.getElementById('controls')!;
-  const sels = el.querySelectorAll('select');
-  let url: string;
-
-  if (period === 'day') {
-    url = `/api/day?date=${sels[0]?.value ?? ''}`;
-  } else if (period === 'week') {
-    url = `/api/week?year=${sels[0]?.value}&week=${sels[1]?.value}`;
-  } else if (period === 'month') {
-    url = `/api/month?year=${sels[0]?.value}&month=${sels[1]?.value}`;
-  } else if (period === 'range') {
-    let from: string | undefined, to: string | undefined;
-    if ((document.getElementById('range-all') as HTMLInputElement | null)?.checked && allDates.length) {
-      from = allDates[0].date;                       // whole dataset
-      to = allDates[allDates.length - 1].date;
-    } else {
-      from = sels[0]?.value; to = sels[1]?.value;
-      if (from && to && from > to) [from, to] = [to, from]; // tolerate reversed picks
-    }
-    url = `/api/range?from=${from}&to=${to}`;
-  } else {
-    url = `/api/year?year=${sels[0]?.value}`;
-  }
-
-  const resp = await fetch(url);
+  const sels = Array.from(document.getElementById('controls')!.querySelectorAll('select'));
+  const resp = await fetch(PERIODS[period].url(sels));
   if (!resp.ok) { lastRows = []; clearAll(); return; }
   const { rows, stats } = await resp.json() as { rows: WeatherRow[]; stats: Stats };
 
