@@ -371,12 +371,19 @@ const CHART_META: ChartSpec[] = [
   },
 ];
 
+// localStorage is unavailable (or full) in private/locked-down browsers, so
+// both sides of the round-trip have to tolerate throwing.
+function readStore<T>(key: string, fallback: T): T {
+  try { return JSON.parse(localStorage.getItem(key) ?? '') as T; } catch { return fallback; }
+}
+function writeStore(key: string, value: unknown): void {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* ignore */ }
+}
+
 function loadChartVisibility(): Record<string, boolean> {
-  const vis: Record<string, boolean> = {};
-  let saved: Record<string, boolean> = {};
-  try { saved = JSON.parse(localStorage.getItem('chartVisibility') || '{}'); } catch { /* ignore */ }
-  CHART_META.forEach(c => { vis[c.key] = saved[c.key] !== false; }); // default visible
-  return vis;
+  const saved = readStore<Record<string, boolean>>('chartVisibility', {});
+  // Default visible: only an explicit `false` hides a chart.
+  return Object.fromEntries(CHART_META.map(c => [c.key, saved[c.key] !== false]));
 }
 
 let chartVisibility: Record<string, boolean> = loadChartVisibility();
@@ -405,7 +412,7 @@ function renderChartToggles(): void {
     btn.addEventListener('click', () => {
       chartVisibility[c.key] = !chartVisibility[c.key];
       sync();
-      try { localStorage.setItem('chartVisibility', JSON.stringify(chartVisibility)); } catch { /* ignore */ }
+      writeStore('chartVisibility', chartVisibility);
       applyChartVisibility();
     });
     el.appendChild(btn);
@@ -426,24 +433,43 @@ function renderCharts(rows: WeatherRow[]): void {
 }
 
 // --- Table ---
+// One entry per column, driving both the header and every body cell. The
+// header used to be hand-written in index.html, so a column added here had to
+// be added there too, in the same position, or the table silently skewed.
+interface TableColumn {
+  label: string;
+  cell: (r: WeatherRow) => string | number;
+  /** Bootstrap class for the cell — a string, or per-row for conditional colour. */
+  cls?: string | ((r: WeatherRow) => string);
+}
+
+const TABLE_COLUMNS: TableColumn[] = [
+  { label: 'Date',      cell: r => r.date },
+  { label: 'T High',    cell: r => r.temp_high, cls: 'text-danger' },
+  { label: 'T Avg',     cell: r => r.temp_avg },
+  { label: 'T Low',     cell: r => r.temp_low,  cls: 'text-info' },
+  { label: 'Hum High',  cell: r => `${r.hum_high}%`, cls: 'text-danger' },
+  { label: 'Hum Avg',   cell: r => `${r.hum_avg}%` },
+  { label: 'Hum Low',   cell: r => `${r.hum_low}%`,  cls: 'text-info' },
+  { label: 'Wind High', cell: r => r.wind_high, cls: 'text-warning' },
+  { label: 'Wind Avg',  cell: r => r.wind_avg },
+  { label: 'Pres High', cell: r => r.pres_high },
+  { label: 'Pres Low',  cell: r => r.pres_low },
+  { label: 'Precip',    cell: r => r.precip, cls: r => (r.precip > 0 ? 'text-primary' : '') },
+];
+
+function renderTableHead(): void {
+  const head = document.getElementById('table-head');
+  if (head) head.innerHTML = TABLE_COLUMNS.map(c => `<th>${c.label}</th>`).join('');
+}
+
 function renderTable(rows: WeatherRow[]): void {
-  const tbody = document.getElementById('table-body')!;
-  tbody.innerHTML = rows.map(r => `
-    <tr>
-      <td>${r.date}</td>
-      <td class="text-danger">${r.temp_high}</td>
-      <td>${r.temp_avg}</td>
-      <td class="text-info">${r.temp_low}</td>
-      <td class="text-danger">${r.hum_high}%</td>
-      <td>${r.hum_avg}%</td>
-      <td class="text-info">${r.hum_low}%</td>
-      <td class="text-warning">${r.wind_high}</td>
-      <td>${r.wind_avg}</td>
-      <td>${r.pres_high}</td>
-      <td>${r.pres_low}</td>
-      <td class="${r.precip > 0 ? 'text-primary' : ''}">${r.precip}</td>
-    </tr>
-  `).join('');
+  document.getElementById('table-body')!.innerHTML = rows.map(r =>
+    `<tr>${TABLE_COLUMNS.map(c => {
+      const cls = typeof c.cls === 'function' ? c.cls(r) : (c.cls ?? '');
+      return `<td class="${cls}">${c.cell(r)}</td>`;
+    }).join('')}</tr>`
+  ).join('');
 }
 
 function clearAll(): void {
@@ -471,6 +497,28 @@ importBtn.addEventListener('click', async () => {
 });
 
 // --- Compare vs public service (Baar) ---
+// The four measures both sources carry. One entry drives that measure's chart
+// (`cmp-<id>`) *and* its summary-table row; they used to be two hand-kept lists
+// naming the same four keys.
+interface CompareSpec {
+  id: string;
+  key: SharedKey;
+  type: string;
+  /** Suffix on the chart's series names ("Me · High"); bar charts use none. */
+  series?: string;
+  row: string;
+}
+
+const COMPARE_META: CompareSpec[] = [
+  { id: 'cmp-temp-high', key: 'temp_high', type: 'line', series: 'High', row: 'Temp High (°C)' },
+  { id: 'cmp-temp-low',  key: 'temp_low',  type: 'line', series: 'Low',  row: 'Temp Low (°C)' },
+  { id: 'cmp-wind',      key: 'wind_high', type: 'line', series: 'Wind', row: 'Wind Max (km/h)' },
+  { id: 'cmp-precip',    key: 'precip',    type: 'bar',                  row: 'Precip (mm)' },
+];
+
+const MINE_COLOR = '#38bdf8';
+const PUBLIC_COLOR = '#fb923c';
+
 let compareOn = false;
 
 const compareBtn = document.getElementById('btn-compare')!;
@@ -510,24 +558,18 @@ async function loadCompare(): Promise<void> {
   const mineOf = (key: SharedKey) => lastRows.map(r => r[key] as number);
   const pubOf  = (key: SharedKey) => lastRows.map(r => (pub.get(r.date)?.[key] ?? null) as number | null);
 
-  const pair = (label: string, key: SharedKey) => ({
-    labels: lbl,
-    datasets: [
-      line(`Me · ${label}`,   mineOf(key), '#38bdf8'),
-      line(`Baar · ${label}`, pubOf(key),  '#fb923c', { borderDash: [5, 3] }),
-    ],
-  });
-
-  mkChart('cmp-temp-high', 'line', pair('High', 'temp_high'));
-  mkChart('cmp-temp-low',  'line', pair('Low',  'temp_low'));
-  mkChart('cmp-wind',      'line', pair('Wind', 'wind_high'));
-  mkChart('cmp-precip', 'bar', {
-    labels: lbl,
-    datasets: [
-      { label: 'Me',   data: mineOf('precip'), backgroundColor: '#38bdf899' },
-      { label: 'Baar', data: pubOf('precip'),  backgroundColor: '#fb923c99' },
-    ],
-  });
+  for (const m of COMPARE_META) {
+    const datasets = m.type === 'bar'
+      ? [
+          { label: 'Me',   data: mineOf(m.key), backgroundColor: `${MINE_COLOR}99` },
+          { label: 'Baar', data: pubOf(m.key),  backgroundColor: `${PUBLIC_COLOR}99` },
+        ]
+      : [
+          line(`Me · ${m.series}`,   mineOf(m.key), MINE_COLOR),
+          line(`Baar · ${m.series}`, pubOf(m.key),  PUBLIC_COLOR, { borderDash: [5, 3] }),
+        ];
+    mkChart(m.id, m.type, { labels: lbl, datasets });
+  }
 
   renderCompareSummary(mineOf, pubOf);
 }
@@ -540,15 +582,9 @@ function renderCompareSummary(
     const v = vals.filter((x): x is number => x != null && !Number.isNaN(x));
     return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
   };
-  const rows: [string, SharedKey][] = [
-    ['Temp High (°C)', 'temp_high'],
-    ['Temp Low (°C)',  'temp_low'],
-    ['Wind Max (km/h)','wind_high'],
-    ['Precip (mm)',    'precip'],
-  ];
   const fmt = (n: number | null) => (n == null ? '—' : n.toFixed(1));
 
-  document.getElementById('cmp-summary-body')!.innerHTML = rows.map(([name, key]) => {
+  document.getElementById('cmp-summary-body')!.innerHTML = COMPARE_META.map(({ row: name, key }) => {
     const mine = avg(mineOf(key));
     const theirs = avg(pubOf(key));
     const diff = (mine != null && theirs != null) ? mine - theirs : null;
@@ -560,6 +596,7 @@ function renderCompareSummary(
 
 // --- Init ---
 (async () => {
+  renderTableHead();
   renderChartToggles();
   applyChartVisibility();   // apply persisted hidden state immediately, even before charts render
   await reloadDates();
