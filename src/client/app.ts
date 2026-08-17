@@ -15,7 +15,9 @@ interface WeatherRow {
   pres_high: number; pres_low: number; precip: number;
 }
 
-interface StatTriple { high: number; avg: number; low: number; }
+/** Interfaces get no implicit index signature, so this is a type alias — the
+    stat cards read their group as a Record<string, number>. */
+type StatTriple = { high: number; avg: number; low: number };
 interface Stats {
   temp: StatTriple;
   dew: StatTriple;
@@ -286,27 +288,68 @@ async function refreshStatus(): Promise<void> {
 }
 
 // --- Stats cards ---
-// Each measure fills the cards `s-<prefix>-<high|avg|low>` from the like-named
-// keys of its stats group, so the card ids and the API shape line up by
-// construction instead of through sixteen hand-written pairings.
-const STAT_GROUPS: { prefix: string; pick: (s: Stats) => Record<string, number>; unit: string }[] = [
-  { prefix: 'temp',  pick: s => s.temp,     unit: '°C' },
-  { prefix: 'hum',   pick: s => s.humidity, unit: '%' },
-  { prefix: 'wind',  pick: s => s.wind,     unit: 'km/h' },
-  { prefix: 'pres',  pick: s => s.pressure, unit: 'hPa' },
-  { prefix: 'dew',   pick: s => s.dew,      unit: '°C' },
+// One entry per card, driving both its markup and its values. The six cards
+// used to be hand-written in index.html, each repeating the same ten lines of
+// Bootstrap and naming ids that a second list here had to match — so a card
+// added in one place was invisible (or blank) until the other agreed.
+interface StatCard {
+  /** Values render into `s-<prefix>-<key>`, matching this card's stats group. */
+  prefix: string;
+  title: string;
+  /** The group of `stats` this card reads. */
+  pick: (s: Stats) => Record<string, number>;
+  /** Appended to every value except those listed in `bare`. */
+  unit: string;
+  /** The key shown as the card's big number. */
+  headline: string;
+  /** The small line under it: value keys with any literal text around them. */
+  sub: { key: string; before?: string; after?: string }[];
+  /** Keys that are counts, not measurements, so they carry no unit. */
+  bare?: string[];
+}
+
+const HIGH_LOW: StatCard['sub'] = [{ key: 'low', after: ' / ' }, { key: 'high' }];
+
+const STAT_CARDS: StatCard[] = [
+  { prefix: 'temp', title: 'Temperature', pick: s => s.temp, unit: '°C',
+    headline: 'avg', sub: HIGH_LOW },
+  { prefix: 'hum', title: 'Humidity', pick: s => s.humidity, unit: '%',
+    headline: 'avg', sub: HIGH_LOW },
+  { prefix: 'wind', title: 'Wind (max)', pick: s => s.wind, unit: 'km/h',
+    headline: 'high', sub: [{ key: 'avg', before: 'avg ' }] },
+  { prefix: 'pres', title: 'Pressure', pick: s => s.pressure, unit: 'hPa',
+    headline: 'avg', sub: HIGH_LOW },
+  { prefix: 'precip', title: 'Precipitation', pick: s => s.precip, unit: 'mm',
+    headline: 'total', sub: [{ key: 'rainy_days', after: ' rainy days' }], bare: ['rainy_days'] },
+  { prefix: 'dew', title: 'Dew Point', pick: s => s.dew, unit: '°C',
+    headline: 'avg', sub: HIGH_LOW },
 ];
+
+const statSpan = (prefix: string, key: string) => `<span id="s-${prefix}-${key}">—</span>`;
+
+function renderStatCards(): void {
+  document.getElementById('stat-cards')!.innerHTML = STAT_CARDS.map(c => `
+    <div class="col-6 col-md-4 col-xl-2">
+      <div class="card bg-secondary-subtle border-0 h-100">
+        <div class="card-body p-3">
+          <div class="text-muted small">${c.title}</div>
+          <div class="fs-4 fw-bold" id="s-${c.prefix}-${c.headline}">—</div>
+          <div class="small text-muted">${c.sub
+            .map(p => `${p.before ?? ''}${statSpan(c.prefix, p.key)}${p.after ?? ''}`)
+            .join('')}</div>
+        </div>
+      </div>
+    </div>`).join('');
+}
 
 function renderStats(s: Stats | undefined): void {
   if (!s) return;
-  for (const { prefix, pick, unit } of STAT_GROUPS) {
-    for (const [key, value] of Object.entries(pick(s))) {
-      setText(`s-${prefix}-${key}`, `${value} ${unit}`);
+  for (const c of STAT_CARDS) {
+    for (const [key, value] of Object.entries(c.pick(s))) {
+      // A group can carry keys no card shows (precip.max); setText ignores those.
+      setText(`s-${c.prefix}-${key}`, c.bare?.includes(key) ? value : `${value} ${c.unit}`);
     }
   }
-  // Precipitation is the odd one out: a total and a day count, not high/avg/low.
-  setText('s-precip-total', `${s.precip.total} mm`);
-  setText('s-precip-rainy', s.precip.rainy_days);
 }
 
 function setText(id: string, val: string | number): void {
@@ -315,15 +358,23 @@ function setText(id: string, val: string | number): void {
 }
 
 // --- The dashboard charts ---
-// One entry per chart: its canvas (`chart-<key>`), its toggle-button label, and
-// how to turn a period's rows into datasets. Both the toggles and the rendering
-// walk this list, so a chart can't end up drawn but untoggleable (or vice
-// versa). Each can be toggled off, which removes its whole grid column so the
-// rest reflow to fill the row; the choice persists in localStorage.
+// One entry per chart: its canvas (`chart-<key>`), its toggle-button label, its
+// grid cell, and how to turn a period's rows into datasets. The card markup,
+// the toggles and the rendering all walk this list, so a chart can't end up
+// drawn but untoggleable, or toggleable with no card to hide (both were
+// possible while the cards lived in index.html). Each can be toggled off, which
+// removes its whole grid column so the rest reflow to fill the row; the choice
+// persists in localStorage.
 interface ChartSpec {
   key: string;
   label: string;
+  /** Appended to the label for the card heading: "Humidity (%)". */
+  unit: string;
   type: string;
+  /** Bootstrap column classes for this chart's cell. */
+  col: string;
+  /** Canvas height attribute — Chart.js uses it as the aspect-ratio hint. */
+  height: number;
   datasets: (rows: WeatherRow[]) => any[];
   /** Chart-specific option overrides merged over CHART_DEFAULTS. */
   opts?: any;
@@ -331,7 +382,7 @@ interface ChartSpec {
 
 const CHART_META: ChartSpec[] = [
   {
-    key: 'temp', label: 'Temperature', type: 'line',
+    key: 'temp', label: 'Temperature', unit: '°C', type: 'line', col: 'col-12 col-xl-8', height: 110,
     datasets: rows => [
       line('High', rows.map(r => r.temp_high), '#f87272'),
       line('Avg',  rows.map(r => r.temp_avg),  '#facc15'),
@@ -340,13 +391,13 @@ const CHART_META: ChartSpec[] = [
     ],
   },
   {
-    key: 'precip', label: 'Precipitation', type: 'bar',
+    key: 'precip', label: 'Precipitation', unit: 'mm', type: 'bar', col: 'col-12 col-xl-4', height: 110,
     datasets: rows => [
       { label: 'Precip', data: rows.map(r => r.precip), backgroundColor: '#60a5fa99' },
     ],
   },
   {
-    key: 'hum', label: 'Humidity', type: 'line',
+    key: 'hum', label: 'Humidity', unit: '%', type: 'line', col: 'col-12 col-md-6 col-xl-4', height: 120,
     datasets: rows => [
       line('High', rows.map(r => r.hum_high), '#f87272', { backgroundColor: '#f8727211', fill: true }),
       line('Avg',  rows.map(r => r.hum_avg),  '#facc15'),
@@ -356,14 +407,14 @@ const CHART_META: ChartSpec[] = [
     opts: { scales: { ...CHART_DEFAULTS.scales, y: { ...CHART_DEFAULTS.scales.y, min: 0, max: 100 } } },
   },
   {
-    key: 'pres', label: 'Pressure', type: 'line',
+    key: 'pres', label: 'Pressure', unit: 'hPa', type: 'line', col: 'col-12 col-md-6 col-xl-4', height: 120,
     datasets: rows => [
       line('High', rows.map(r => r.pres_high), '#a78bfa'),
       line('Low',  rows.map(r => r.pres_low),  '#818cf8', { backgroundColor: '#818cf811', fill: true }),
     ],
   },
   {
-    key: 'wind', label: 'Wind', type: 'line',
+    key: 'wind', label: 'Wind', unit: 'km/h', type: 'line', col: 'col-12 col-md-6 col-xl-4', height: 120,
     datasets: rows => [
       line('High', rows.map(r => r.wind_high), '#fb923c', { backgroundColor: '#fb923c11', fill: true }),
       line('Avg',  rows.map(r => r.wind_avg),  '#fdba74'),
@@ -417,6 +468,37 @@ function renderChartToggles(): void {
     });
     el.appendChild(btn);
   });
+}
+
+/**
+ * One chart card: a Bootstrap column wrapping a titled canvas. The dashboard
+ * and the Compare view both used to spell this out per chart in index.html —
+ * nine near-identical ten-line blocks whose canvas ids had to match the two
+ * metadata lists here by hand.
+ */
+function chartCard(o: {
+  id: string; title: string; col: string; height: number; attr?: string;
+}): string {
+  return `
+    <div class="${o.col}"${o.attr ?? ''}>
+      <div class="card bg-secondary-subtle border-0">
+        <div class="card-body">
+          <h6 class="card-title text-muted">${o.title}</h6>
+          <canvas id="${o.id}" height="${o.height}"></canvas>
+        </div>
+      </div>
+    </div>`;
+}
+
+function renderChartCards(): void {
+  document.getElementById('chart-cards')!.innerHTML = CHART_META.map(c =>
+    chartCard({
+      id: `chart-${c.key}`,
+      title: `${c.label} (${c.unit})`,
+      col: c.col,
+      height: c.height,
+      attr: ` data-chart="${c.key}"`,   // what applyChartVisibility() hides
+    })).join('');
 }
 
 // --- Charts ---
@@ -498,23 +580,35 @@ importBtn.addEventListener('click', async () => {
 
 // --- Compare vs public service (Baar) ---
 // The four measures both sources carry. One entry drives that measure's chart
-// (`cmp-<id>`) *and* its summary-table row; they used to be two hand-kept lists
-// naming the same four keys.
+// card, the chart itself (`cmp-<id>`) *and* its summary-table row; they used to
+// be three hand-kept lists — two here and one in index.html — naming the same
+// four keys.
 interface CompareSpec {
   id: string;
   key: SharedKey;
   type: string;
   /** Suffix on the chart's series names ("Me · High"); bar charts use none. */
   series?: string;
+  /** Heading on the chart card. */
+  title: string;
   row: string;
 }
 
 const COMPARE_META: CompareSpec[] = [
-  { id: 'cmp-temp-high', key: 'temp_high', type: 'line', series: 'High', row: 'Temp High (°C)' },
-  { id: 'cmp-temp-low',  key: 'temp_low',  type: 'line', series: 'Low',  row: 'Temp Low (°C)' },
-  { id: 'cmp-wind',      key: 'wind_high', type: 'line', series: 'Wind', row: 'Wind Max (km/h)' },
-  { id: 'cmp-precip',    key: 'precip',    type: 'bar',                  row: 'Precip (mm)' },
+  { id: 'cmp-temp-high', key: 'temp_high', type: 'line', series: 'High',
+    title: 'Temperature High (°C)', row: 'Temp High (°C)' },
+  { id: 'cmp-temp-low',  key: 'temp_low',  type: 'line', series: 'Low',
+    title: 'Temperature Low (°C)',  row: 'Temp Low (°C)' },
+  { id: 'cmp-precip',    key: 'precip',    type: 'bar',
+    title: 'Precipitation (mm)',    row: 'Precip (mm)' },
+  { id: 'cmp-wind',      key: 'wind_high', type: 'line', series: 'Wind',
+    title: 'Wind Max (km/h)',       row: 'Wind Max (km/h)' },
 ];
+
+function renderCompareCards(): void {
+  document.getElementById('cmp-chart-cards')!.innerHTML = COMPARE_META.map(m =>
+    chartCard({ id: m.id, title: m.title, col: 'col-12 col-xl-6', height: 110 })).join('');
+}
 
 const MINE_COLOR = '#38bdf8';
 const PUBLIC_COLOR = '#fb923c';
@@ -596,6 +690,9 @@ function renderCompareSummary(
 
 // --- Init ---
 (async () => {
+  renderStatCards();
+  renderChartCards();
+  renderCompareCards();
   renderTableHead();
   renderChartToggles();
   applyChartVisibility();   // apply persisted hidden state immediately, even before charts render
