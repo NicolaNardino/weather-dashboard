@@ -19,7 +19,9 @@ export interface ImportResult {
   unchanged: number;  // dates already present with identical values
 }
 
-// Fields (in insert order) used to detect whether an existing row changed.
+// The 15 measure columns, in the order they appear in weather_data.txt after
+// the date. Drives the INSERT statement, the parse and the changed-row check,
+// so a new column is added here alone.
 const FIELDS = [
   'temp_high', 'temp_avg', 'temp_low',
   'dew_high', 'dew_avg', 'dew_low',
@@ -28,17 +30,14 @@ const FIELDS = [
   'pres_high', 'pres_low', 'precip',
 ] as const;
 
+const COLUMNS = ['date', ...FIELDS];
+
 export function importFile(filePath: string): ImportResult {
   const db = getDb();
-  const insert = db.prepare(`
-    INSERT OR REPLACE INTO weather
-      (date, temp_high, temp_avg, temp_low,
-       dew_high, dew_avg, dew_low,
-       hum_high, hum_avg, hum_low,
-       wind_high, wind_avg, wind_low,
-       pres_high, pres_low, precip)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-  `);
+  const insert = db.prepare(
+    `INSERT OR REPLACE INTO weather (${COLUMNS.join(', ')})
+     VALUES (${COLUMNS.map(() => '?').join(',')})`,
+  );
 
   // Snapshot existing rows up front so we can tell new/changed from unchanged.
   const existing = new Map<string, Record<string, number>>();
