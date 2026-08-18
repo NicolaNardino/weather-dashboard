@@ -117,17 +117,21 @@ const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct'
  * is one entry, not two branches in two places.
  */
 interface PeriodSpec {
+  /** Text on this period's nav tab. */
+  label: string;
   controls: (el: HTMLElement, dates: string[]) => void;
   url: (sels: HTMLSelectElement[]) => string;
 }
 
 const PERIODS = {
   day: {
+    label: 'Day',
     controls: (el, dates) => el.append(mkSelect(asOptions(dates), dates[dates.length - 1], load)),
     url: s => `/api/day?date=${s[0]?.value ?? ''}`,
   },
 
   week: {
+    label: 'Week',
     controls: el => {
       const weeks = Array.from({ length: 53 }, (_, i) => ({
         value: String(i + 1),
@@ -139,6 +143,7 @@ const PERIODS = {
   },
 
   month: {
+    label: 'Month',
     controls: el => {
       const months = MONTH_NAMES.map((n, i) => ({ value: String(i + 1), label: n }));
       el.append(yearSelect(), mkSelect(months, String(refDate().getMonth() + 1), load));
@@ -147,11 +152,13 @@ const PERIODS = {
   },
 
   year: {
+    label: 'Year',
     controls: el => el.append(yearSelect()),
     url: s => `/api/year?year=${s[0]?.value}`,
   },
 
   range: {
+    label: 'Range',
     // Two date pickers populated ONLY from dates that exist in the data,
     // so the user can never select a window outside the recorded range.
     // From defaults to the last ~30 available days for a sensible window.
@@ -198,17 +205,29 @@ let allDates: DateRow[] = [];
 let lastRows: WeatherRow[] = [];   // rows from the most recent dashboard load (drives Compare range)
 
 // --- Nav tabs ---
-document.querySelectorAll<HTMLElement>('[data-period]').forEach(btn => {
-  btn.addEventListener('click', () => {
-    const next = btn.dataset.period as Period;
-    if (!PERIODS[next]) return;   // a button whose period we don't implement
-    document.querySelectorAll<HTMLElement>('[data-period]').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    period = next;
-    renderControls();
-    load();
-  });
-});
+// Built from PERIODS, like every other list on the page. The tabs used to be
+// hand-written in index.html — a fifth copy of the period names that could
+// offer a period the dashboard didn't implement, which the click handler had
+// to guard against.
+function renderPeriodTabs(): void {
+  const el = document.getElementById('period-tabs')!;
+  el.innerHTML = '';
+  for (const key of Object.keys(PERIODS) as Period[]) {
+    const btn = mkEl('button', {
+      type: 'button',
+      className: `btn btn-outline-secondary${key === period ? ' active' : ''}`,
+      textContent: PERIODS[key].label,
+    });
+    btn.dataset.period = key;   // the verification harness clicks these
+    btn.addEventListener('click', () => {
+      period = key;
+      renderPeriodTabs();       // re-render to move the active class
+      renderControls();
+      load();
+    });
+    el.append(btn);
+  }
+}
 
 // --- Controls ---
 function renderControls(): void {
@@ -690,6 +709,7 @@ function renderCompareSummary(
 
 // --- Init ---
 (async () => {
+  renderPeriodTabs();
   renderStatCards();
   renderChartCards();
   renderCompareCards();
