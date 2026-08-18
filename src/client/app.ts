@@ -221,6 +221,7 @@ function renderPeriodTabs(): void {
     btn.dataset.period = key;   // the verification harness clicks these
     btn.addEventListener('click', () => {
       period = key;
+      showView('dashboard');    // period tabs belong to the dashboard
       renderPeriodTabs();       // re-render to move the active class
       renderControls();
       load();
@@ -632,16 +633,29 @@ function renderCompareCards(): void {
 const MINE_COLOR = '#38bdf8';
 const PUBLIC_COLOR = '#fb923c';
 
-let compareOn = false;
+// The page has three mutually-exclusive views. Toggling one on turns the
+// others off; both overlay buttons stay in sync from this single place, and
+// the dashboard's period tabs (below) route back here.
+type ViewName = 'dashboard' | 'compare' | 'yoy';
+let currentView: ViewName = 'dashboard';
 
 const compareBtn = document.getElementById('btn-compare')!;
-compareBtn.addEventListener('click', () => {
-  compareOn = !compareOn;
-  document.getElementById('dashboard-view')!.classList.toggle('d-none', compareOn);
-  document.getElementById('compare-view')!.classList.toggle('d-none', !compareOn);
-  compareBtn.classList.toggle('active', compareOn);
-  if (compareOn) loadCompare();
-});
+const yoyBtn = document.getElementById('btn-yoy')!;
+
+function showView(v: ViewName): void {
+  currentView = v;
+  document.getElementById('dashboard-view')!.classList.toggle('d-none', v !== 'dashboard');
+  document.getElementById('compare-view')!.classList.toggle('d-none', v !== 'compare');
+  document.getElementById('yoy-view')!.classList.toggle('d-none', v !== 'yoy');
+  compareBtn.classList.toggle('active', v === 'compare');
+  yoyBtn.classList.toggle('active', v === 'yoy');
+  if (v === 'compare') loadCompare();
+  if (v === 'yoy') { renderYoyControls(); loadYoy(); }
+}
+
+// Each overlay button toggles its own view, falling back to the dashboard.
+compareBtn.addEventListener('click', () => showView(currentView === 'compare' ? 'dashboard' : 'compare'));
+yoyBtn.addEventListener('click', () => showView(currentView === 'yoy' ? 'dashboard' : 'yoy'));
 
 async function loadCompare(): Promise<void> {
   const status = document.getElementById('cmp-status')!;
@@ -707,12 +721,187 @@ function renderCompareSummary(
   }).join('');
 }
 
+// --- Across years (year-over-year) ---
+// Compare the SAME day, week or month across every year in the data. The server
+// gathers each year's rows for the chosen period; here each year becomes one
+// overlaid series (aligned on a shared within-period axis) plus one column in
+// the averages table.
+interface YearBlock { year: number; rows: WeatherRow[]; stats: Stats; }
+interface YoyResponse { unit: 'day' | 'week' | 'month'; label: string; years: YearBlock[]; }
+
+// A distinct, cycled colour per year across all the charts.
+const YEAR_COLORS = ['#38bdf8', '#fb923c', '#4ade80', '#f472b6', '#facc15', '#a78bfa'];
+const yearColor = (i: number) => YEAR_COLORS[i % YEAR_COLORS.length];
+
+// One chart per metric; each draws one line (or bar) per year. `get` reads the
+// plotted value from a row — a function, not a key, so derived measures like
+// mid-pressure fit the same list.
+interface YoyMetric { id: string; title: string; type: string; get: (r: WeatherRow) => number; }
+const YOY_METRICS: YoyMetric[] = [
+  { id: 'yoy-temp-avg',  title: 'Temp Avg (°C)',    type: 'line', get: r => r.temp_avg },
+  { id: 'yoy-temp-high', title: 'Temp High (°C)',   type: 'line', get: r => r.temp_high },
+  { id: 'yoy-temp-low',  title: 'Temp Low (°C)',    type: 'line', get: r => r.temp_low },
+  { id: 'yoy-hum-avg',   title: 'Humidity Avg (%)', type: 'line', get: r => r.hum_avg },
+  { id: 'yoy-wind-high', title: 'Wind Max (km/h)',  type: 'line', get: r => r.wind_high },
+  { id: 'yoy-pres-avg',  title: 'Pressure Avg (hPa)', type: 'line', get: r => (r.pres_high + r.pres_low) / 2 },
+  { id: 'yoy-precip',    title: 'Precipitation (mm)', type: 'bar',  get: r => r.precip },
+];
+
+// The averages table, one row per stat, reading the server's aggregated stats.
+const YOY_SUMMARY: { label: string; unit: string; get: (s: Stats) => number }[] = [
+  { label: 'Temp avg',     unit: '°C',   get: s => s.temp.avg },
+  { label: 'Temp high',    unit: '°C',   get: s => s.temp.high },
+  { label: 'Temp low',     unit: '°C',   get: s => s.temp.low },
+  { label: 'Humidity avg', unit: '%',    get: s => s.humidity.avg },
+  { label: 'Wind max',     unit: 'km/h', get: s => s.wind.high },
+  { label: 'Pressure avg', unit: 'hPa',  get: s => s.pressure.avg },
+  { label: 'Precip total', unit: 'mm',   get: s => s.precip.total },
+  { label: 'Rainy days',   unit: '',     get: s => s.precip.rainy_days },
+];
+
+// The current comparison unit; its value pickers are rebuilt when it changes.
+let yoyUnit: YoyResponse['unit'] = 'month';
+
+function renderYoyCards(): void {
+  document.getElementById('yoy-chart-cards')!.innerHTML = YOY_METRICS.map(m =>
+    chartCard({ id: m.id, title: m.title, col: 'col-12 col-md-6 col-xl-4', height: 120 })).join('');
+}
+
+/** Rebuild the unit selector and the value pickers it implies. */
+function renderYoyControls(): void {
+  const el = document.getElementById('yoy-controls')!;
+  el.innerHTML = '';
+  const label = (t: string) => mkEl('span', { className: 'text-muted small', textContent: t });
+
+  const unitSel = mkSelect(
+    [{ value: 'day', label: 'Day' }, { value: 'week', label: 'Week' }, { value: 'month', label: 'Month' }],
+    yoyUnit,
+    () => { yoyUnit = unitSel.value as YoyResponse['unit']; renderYoyControls(); loadYoy(); },
+  );
+  el.append(label('Compare'), unitSel);
+
+  const monthOpts = MONTH_NAMES.map((n, i) => ({ value: String(i + 1), label: n }));
+  if (yoyUnit === 'month') {
+    el.append(mkSelect(monthOpts, String(refDate().getMonth() + 1), loadYoy));
+  } else if (yoyUnit === 'week') {
+    const weeks = Array.from({ length: 53 }, (_, i) => ({ value: String(i + 1), label: `Week ${i + 1}` }));
+    el.append(mkSelect(weeks, String(isoWeek(refDate())), loadYoy));
+  } else {
+    const days = Array.from({ length: 31 }, (_, i) => ({ value: String(i + 1), label: String(i + 1) }));
+    el.append(
+      mkSelect(monthOpts, String(refDate().getMonth() + 1), loadYoy),
+      mkSelect(days, String(refDate().getDate()), loadYoy),
+    );
+  }
+}
+
+/** Turn the current value pickers into the /api/across-years call. */
+function yoyUrl(): string {
+  const vals = Array.from(document.getElementById('yoy-controls')!.querySelectorAll('select')).slice(1);
+  if (yoyUnit === 'month') return `/api/across-years?unit=month&month=${vals[0]?.value}`;
+  if (yoyUnit === 'week')  return `/api/across-years?unit=week&week=${vals[0]?.value}`;
+  return `/api/across-years?unit=day&month=${vals[0]?.value}&day=${vals[1]?.value}`;
+}
+
+// Where a row sits inside its period, so the same slot lines up across years:
+// day-of-month for months, weekday for weeks, a single slot for a day.
+function yoyPos(unit: YoyResponse['unit'], r: WeatherRow): number {
+  const [y, m, d] = r.date.split('-').map(Number);
+  if (unit === 'month') return d;                       // 1..31
+  if (unit === 'week')  return new Date(y, m - 1, d).getDay() || 7; // Mon=1..Sun=7
+  return 1;                                             // day: one slot
+}
+
+/** The shared x-axis for a unit: its slot positions and their labels. */
+function yoyAxis(unit: YoyResponse['unit'], label: string): { positions: number[]; labels: string[] } {
+  if (unit === 'month') {
+    const positions = Array.from({ length: 31 }, (_, i) => i + 1);
+    return { positions, labels: positions.map(String) };
+  }
+  if (unit === 'week') {
+    return { positions: [1, 2, 3, 4, 5, 6, 7], labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] };
+  }
+  return { positions: [1], labels: [label] };
+}
+
+async function loadYoy(): Promise<void> {
+  const status = document.getElementById('yoy-status')!;
+  status.textContent = 'Loading…';
+
+  let data: YoyResponse;
+  try {
+    const r = await fetch(yoyUrl());
+    if (!r.ok) throw new Error((await r.json()).error || r.statusText);
+    data = await r.json() as YoyResponse;
+  } catch (e) {
+    status.textContent = `Could not load: ${(e as Error).message}`;
+    return;
+  }
+
+  document.getElementById('yoy-heading')!.textContent = `${data.label} across years`;
+  if (!data.years.length) {
+    status.textContent = 'No data for this period.';
+    YOY_METRICS.forEach(m => destroyChart(m.id));
+    document.getElementById('yoy-summary-head')!.innerHTML = '';
+    document.getElementById('yoy-summary-body')!.innerHTML = '';
+    return;
+  }
+  status.textContent = data.years.length < 2
+    ? `Only ${data.years[0].year} has data for this period — add another year to compare.`
+    : '';
+
+  const { positions, labels: xlabels } = yoyAxis(data.unit, data.label);
+  // Per year: within-period slot → that day's row, so each x-slot can pull each
+  // year's value (or null where a year is missing that day).
+  const byPos = data.years.map(yb => {
+    const map = new Map<number, WeatherRow>();
+    for (const row of yb.rows) map.set(yoyPos(data.unit, row), row);
+    return map;
+  });
+
+  for (const metric of YOY_METRICS) {
+    const datasets = data.years.map((yb, i) => {
+      const arr = positions.map(p => { const row = byPos[i].get(p); return row ? metric.get(row) : null; });
+      return metric.type === 'bar'
+        ? { label: String(yb.year), data: arr, backgroundColor: `${yearColor(i)}99` }
+        : line(String(yb.year), arr, yearColor(i));
+    });
+    mkChart(metric.id, metric.type, { labels: xlabels, datasets });
+  }
+
+  renderYoySummary(data);
+}
+
+function renderYoySummary(data: YoyResponse): void {
+  const round = (v: number) => Math.round(v * 10) / 10;
+  const yearCols = data.years.map(y => `<th>${y.year}</th>`).join('');
+  // With ≥2 years, a trailing column shows the change from the earliest to the
+  // latest year — the headline "how did this period differ" number.
+  const hasDelta = data.years.length >= 2;
+  document.getElementById('yoy-summary-head')!.innerHTML =
+    `<th>Metric</th>${yearCols}${hasDelta ? '<th>Δ latest−earliest</th>' : ''}`;
+
+  document.getElementById('yoy-summary-body')!.innerHTML = YOY_SUMMARY.map(m => {
+    const vals = data.years.map(y => m.get(y.stats));
+    const suffix = m.unit ? ` ${m.unit}` : '';
+    const cells = vals.map(v => `<td>${v}${suffix}</td>`).join('');
+    let delta = '';
+    if (hasDelta) {
+      const d = round(vals[vals.length - 1] - vals[0]);
+      const cls = d > 0 ? 'text-danger' : d < 0 ? 'text-info' : '';
+      delta = `<td class="${cls}">${d > 0 ? '+' : ''}${d}${suffix}</td>`;
+    }
+    return `<tr><td>${m.label}</td>${cells}${delta}</tr>`;
+  }).join('');
+}
+
 // --- Init ---
 (async () => {
   renderPeriodTabs();
   renderStatCards();
   renderChartCards();
   renderCompareCards();
+  renderYoyCards();
   renderTableHead();
   renderChartToggles();
   applyChartVisibility();   // apply persisted hidden state immediately, even before charts render
