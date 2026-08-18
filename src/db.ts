@@ -117,6 +117,14 @@ export function queryAllDates(): { date: string }[] {
   return all<{ date: string }>('SELECT date FROM weather ORDER BY date');
 }
 
+/** Distinct calendar years present in the data, ascending — drives the
+    year-over-year comparison, which gathers the same period across each. */
+export function queryYears(): number[] {
+  return all<{ y: string }>(
+    'SELECT DISTINCT substr(date, 1, 4) AS y FROM weather ORDER BY y',
+  ).map(r => Number(r.y));
+}
+
 // --- Public weather service cache (Open-Meteo) ---
 
 export interface PublicRow {

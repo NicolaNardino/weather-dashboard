@@ -3,12 +3,14 @@ import path from 'path';
 import { DATA_FILE, describeImport, importFile } from './import';
 import {
   queryDay, queryWeek, queryMonth, queryYear, queryRange,
-  queryAllDates, aggregateStats, getMeta, WeatherRow,
+  queryAllDates, queryYears, aggregateStats, getMeta, WeatherRow,
   queryPublicRange, upsertPublic, PublicRow
 } from './db';
 
 // Baar, Canton Zug, Switzerland — reference location for the public comparison.
 const BAAR = { lat: 47.196, lon: 8.529, label: 'Baar, CH' };
+
+const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 // Every calendar day (YYYY-MM-DD) in [from, to] inclusive.
 function eachDate(from: string, to: string): string[] {
@@ -134,6 +136,46 @@ app.get('/api/compare', async (req, res) => {
     if (cached.length) return reply(cached, { cached: true, stale: true });
     res.status(502).json({ error: String(err) });
   }
+});
+
+// GET /api/across-years — gather the SAME period across every year that has
+// data, so the same day, week or month can be compared year-over-year:
+//   ?unit=month&month=3        → March of each year
+//   ?unit=week&week=12         → ISO week 12 of each year
+//   ?unit=day&month=3&day=15   → 15 March of each year
+// Each year is returned with its rows and aggregated stats; years with no data
+// for that period are omitted, so with one year of data it degrades to one.
+app.get('/api/across-years', (req, res) => {
+  const q = req.query as Record<string, string | undefined>;
+  const unit = q.unit ?? '';
+  const month = Number(q.month), week = Number(q.week), day = Number(q.day);
+
+  let label: string;
+  let rowsFor: (year: number) => WeatherRow[];
+
+  if (unit === 'month') {
+    if (!month) return res.status(400).json({ error: 'month required' });
+    label = MONTH_NAMES[month - 1] ?? `Month ${month}`;
+    rowsFor = y => queryMonth(y, month);
+  } else if (unit === 'week') {
+    if (!week) return res.status(400).json({ error: 'week required' });
+    label = `Week ${week}`;
+    rowsFor = y => queryWeek(y, week);
+  } else if (unit === 'day') {
+    if (!month || !day) return res.status(400).json({ error: 'month and day required' });
+    const mm = String(month).padStart(2, '0'), dd = String(day).padStart(2, '0');
+    label = `${MONTH_NAMES[month - 1] ?? month} ${day}`;
+    rowsFor = y => { const r = queryDay(`${y}-${mm}-${dd}`); return r ? [r] : []; };
+  } else {
+    return res.status(400).json({ error: 'unit must be day, week or month' });
+  }
+
+  const years = queryYears()
+    .map(year => ({ year, rows: rowsFor(year) }))
+    .filter(x => x.rows.length)
+    .map(x => ({ year: x.year, rows: x.rows, stats: aggregateStats(x.rows) }));
+
+  res.json({ unit, label, years });
 });
 
 // GET /api/day?date=YYYY-MM-DD — the one period route that can 404
