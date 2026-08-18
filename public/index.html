@@ -11,13 +11,8 @@
 
 <nav class="navbar navbar-dark bg-black px-4 py-2 d-flex align-items-center gap-3">
   <span class="navbar-brand mb-0 h1 fs-5">&#127782; Weather Dashboard</span>
-  <div class="btn-group btn-group-sm" id="period-tabs">
-    <button class="btn btn-outline-secondary" data-period="day">Day</button>
-    <button class="btn btn-outline-secondary active" data-period="week">Week</button>
-    <button class="btn btn-outline-secondary" data-period="month">Month</button>
-    <button class="btn btn-outline-secondary" data-period="year">Year</button>
-    <button class="btn btn-outline-secondary" data-period="range">Range</button>
-  </div>
+  <!-- Period tabs — rendered from PERIODS in app.ts. -->
+  <div class="btn-group btn-group-sm" id="period-tabs"></div>
   <button class="btn btn-sm btn-outline-warning ms-3" id="btn-compare" title="Compare my data against a public weather service">&#127757; Compare vs Baar</button>
   <div id="controls" class="d-flex gap-2 align-items-center ms-auto"></div>
   <span id="last-import" class="text-muted small ms-2" title="Last time weather_data.txt was imported"></span>

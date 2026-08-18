@@ -3,6 +3,26 @@ import path from 'path';
 
 const DB_PATH = path.join(process.cwd(), 'weather.db');
 
+/**
+ * The 15 measure columns, in the order they appear in weather_data.txt after
+ * the date. This is the single source of truth for them: it builds the
+ * `weather` table, types `WeatherRow`, and drives the import (see import.ts) —
+ * so a new column is added here alone rather than in three lists that had to
+ * agree.
+ */
+export const FIELDS = [
+  'temp_high', 'temp_avg', 'temp_low',
+  'dew_high', 'dew_avg', 'dew_low',
+  'hum_high', 'hum_avg', 'hum_low',
+  'wind_high', 'wind_avg', 'wind_low',
+  'pres_high', 'pres_low', 'precip',
+] as const;
+
+export type Field = (typeof FIELDS)[number];
+
+/** Every column of the `weather` table, in insert order. */
+export const COLUMNS = ['date', ...FIELDS];
+
 let _db: DatabaseSync | null = null;
 
 export function getDb(): DatabaseSync {
@@ -11,14 +31,9 @@ export function getDb(): DatabaseSync {
     _db.exec(`PRAGMA journal_mode=WAL`);
     _db.exec(`
       CREATE TABLE IF NOT EXISTS weather (
-        id          INTEGER PRIMARY KEY AUTOINCREMENT,
-        date        TEXT UNIQUE NOT NULL,
-        temp_high   REAL, temp_avg REAL, temp_low REAL,
-        dew_high    REAL, dew_avg  REAL, dew_low  REAL,
-        hum_high    REAL, hum_avg  REAL, hum_low  REAL,
-        wind_high   REAL, wind_avg REAL, wind_low REAL,
-        pres_high   REAL, pres_low REAL,
-        precip      REAL
+        id   INTEGER PRIMARY KEY AUTOINCREMENT,
+        date TEXT UNIQUE NOT NULL,
+        ${FIELDS.map(f => `${f} REAL`).join(', ')}
       )
     `);
     _db.exec(`
@@ -60,16 +75,8 @@ export function getMeta(key: string): string | undefined {
   return one<{ value: string }>('SELECT value FROM meta WHERE key = ?', key)?.value;
 }
 
-export interface WeatherRow {
-  id: number;
-  date: string;
-  temp_high: number; temp_avg: number; temp_low: number;
-  dew_high: number;  dew_avg: number;  dew_low: number;
-  hum_high: number;  hum_avg: number;  hum_low: number;
-  wind_high: number; wind_avg: number; wind_low: number;
-  pres_high: number; pres_low: number;
-  precip: number;
-}
+/** A row of the `weather` table: the id, the date, and one number per FIELD. */
+export type WeatherRow = { id: number; date: string } & Record<Field, number>;
 
 export function queryDay(date: string): WeatherRow | undefined {
   return one<WeatherRow>('SELECT * FROM weather WHERE date = ?', date);
@@ -93,16 +100,17 @@ export function queryYear(year: number): WeatherRow[] {
 }
 
 export function queryWeek(year: number, week: number): WeatherRow[] {
-  // ISO week: find the Monday of that week
-  const jan4 = new Date(year, 0, 4);
-  const dayOfWeek = jan4.getDay() || 7;
+  // ISO week: walk back from Jan 4 (always in week 1) to that week's Monday.
+  // All UTC: the dates are formatted with toISOString, so building them in
+  // local time shifted them a day either side of midnight west/east of UTC.
+  const jan4 = new Date(Date.UTC(year, 0, 4));
   const monday = new Date(jan4);
-  monday.setDate(jan4.getDate() - (dayOfWeek - 1) + (week - 1) * 7);
+  monday.setUTCDate(jan4.getUTCDate() - ((jan4.getUTCDay() || 7) - 1) + (week - 1) * 7);
   const sunday = new Date(monday);
-  sunday.setDate(monday.getDate() + 6);
+  sunday.setUTCDate(monday.getUTCDate() + 6);
 
-  const fmt = (d: Date) => d.toISOString().slice(0, 10);
-  return queryRange(fmt(monday), fmt(sunday));
+  const isoDate = (d: Date) => d.toISOString().slice(0, 10);
+  return queryRange(isoDate(monday), isoDate(sunday));
 }
 
 export function queryAllDates(): { date: string }[] {

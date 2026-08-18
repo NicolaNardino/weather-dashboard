@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { getDb, setMeta } from './db';
+import { COLUMNS, FIELDS, getDb, setMeta } from './db';
 
 function parseNum(s: string): number {
   return parseFloat(s.replace(/,/g, '').replace(/[^\d.-]/g, ''));
@@ -18,19 +18,6 @@ export interface ImportResult {
   updated: number;    // dates that existed but whose values changed
   unchanged: number;  // dates already present with identical values
 }
-
-// The 15 measure columns, in the order they appear in weather_data.txt after
-// the date. Drives the INSERT statement, the parse and the changed-row check,
-// so a new column is added here alone.
-const FIELDS = [
-  'temp_high', 'temp_avg', 'temp_low',
-  'dew_high', 'dew_avg', 'dew_low',
-  'hum_high', 'hum_avg', 'hum_low',
-  'wind_high', 'wind_avg', 'wind_low',
-  'pres_high', 'pres_low', 'precip',
-] as const;
-
-const COLUMNS = ['date', ...FIELDS];
 
 export function importFile(filePath: string): ImportResult {
   const db = getDb();
