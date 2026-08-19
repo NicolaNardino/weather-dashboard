@@ -12,6 +12,11 @@ const BAAR = { lat: 47.196, lon: 8.529, label: 'Baar, CH' };
 
 const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
+/** "Mar" for 3, falling back to the bare number for anything out of range. */
+const monthName = (m: number) => MONTH_NAMES[m - 1] ?? `Month ${m}`;
+
+const pad2 = (n: number) => String(n).padStart(2, '0');
+
 // Every calendar day (YYYY-MM-DD) in [from, to] inclusive.
 function eachDate(from: string, to: string): string[] {
   const out: string[] = [];
@@ -65,6 +70,22 @@ function requireQuery(req: Request, res: Response, names: string[]): Record<stri
   return Object.fromEntries(names.map(n => [n, q[n] as string]));
 }
 
+/**
+ * Same, but for params that must be positive numbers (a period index is never
+ * 0), returning them already converted.
+ */
+function requireNumbers(
+  req: Request, res: Response, names: string[],
+): Record<string, number> | null {
+  const q = req.query as Record<string, string | undefined>;
+  const nums = Object.fromEntries(names.map(n => [n, Number(q[n])]));
+  if (names.some(n => !nums[n])) {
+    res.status(400).json({ error: `${names.join(' and ')} required` });
+    return null;
+  }
+  return nums;
+}
+
 /** The period routes all share a shape: check params, query rows, add stats. */
 function rowsRoute(names: string[], rows: (q: Record<string, string>) => WeatherRow[]) {
   return (req: Request, res: Response) => {
@@ -74,6 +95,40 @@ function rowsRoute(names: string[], rows: (q: Record<string, string>) => Weather
     res.json({ rows: found, stats: aggregateStats(found) });
   };
 }
+
+/**
+ * One entry per year-over-year comparison unit: the params it needs, the label
+ * it puts on the result, and how to gather one year's rows. Dispatching the
+ * unit once here keeps a new unit to a single entry, instead of a three-arm
+ * if/else that spelled out validation, labelling and querying separately.
+ */
+interface YoyUnit {
+  /** Query params that must be present and numeric. */
+  needs: string[];
+  label: (q: Record<string, number>) => string;
+  rows: (q: Record<string, number>) => (year: number) => WeatherRow[];
+}
+
+const YOY_UNITS: Record<string, YoyUnit> = {
+  day: {
+    needs: ['month', 'day'],
+    label: q => `${monthName(q.month)} ${q.day}`,
+    rows: q => y => {
+      const r = queryDay(`${y}-${pad2(q.month)}-${pad2(q.day)}`);
+      return r ? [r] : [];
+    },
+  },
+  week: {
+    needs: ['week'],
+    label: q => `Week ${q.week}`,
+    rows: q => y => queryWeek(y, q.week),
+  },
+  month: {
+    needs: ['month'],
+    label: q => monthName(q.month),
+    rows: q => y => queryMonth(y, q.month),
+  },
+};
 
 const app = express();
 const PORT = process.env.PORT ?? 3000;
@@ -146,36 +201,19 @@ app.get('/api/compare', async (req, res) => {
 // Each year is returned with its rows and aggregated stats; years with no data
 // for that period are omitted, so with one year of data it degrades to one.
 app.get('/api/across-years', (req, res) => {
-  const q = req.query as Record<string, string | undefined>;
-  const unit = q.unit ?? '';
-  const month = Number(q.month), week = Number(q.week), day = Number(q.day);
+  const spec = YOY_UNITS[String(req.query.unit ?? '')];
+  if (!spec) return res.status(400).json({ error: 'unit must be day, week or month' });
 
-  let label: string;
-  let rowsFor: (year: number) => WeatherRow[];
+  const q = requireNumbers(req, res, spec.needs);
+  if (!q) return;
 
-  if (unit === 'month') {
-    if (!month) return res.status(400).json({ error: 'month required' });
-    label = MONTH_NAMES[month - 1] ?? `Month ${month}`;
-    rowsFor = y => queryMonth(y, month);
-  } else if (unit === 'week') {
-    if (!week) return res.status(400).json({ error: 'week required' });
-    label = `Week ${week}`;
-    rowsFor = y => queryWeek(y, week);
-  } else if (unit === 'day') {
-    if (!month || !day) return res.status(400).json({ error: 'month and day required' });
-    const mm = String(month).padStart(2, '0'), dd = String(day).padStart(2, '0');
-    label = `${MONTH_NAMES[month - 1] ?? month} ${day}`;
-    rowsFor = y => { const r = queryDay(`${y}-${mm}-${dd}`); return r ? [r] : []; };
-  } else {
-    return res.status(400).json({ error: 'unit must be day, week or month' });
-  }
-
+  const rowsFor = spec.rows(q);
   const years = queryYears()
     .map(year => ({ year, rows: rowsFor(year) }))
     .filter(x => x.rows.length)
-    .map(x => ({ year: x.year, rows: x.rows, stats: aggregateStats(x.rows) }));
+    .map(x => ({ ...x, stats: aggregateStats(x.rows) }));
 
-  res.json({ unit, label, years });
+  res.json({ unit: req.query.unit, label: spec.label(q), years });
 });
 
 // GET /api/day?date=YYYY-MM-DD — the one period route that can 404
