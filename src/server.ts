@@ -58,32 +58,26 @@ async function fetchOpenMeteo(from: string, to: string): Promise<PublicRow[]> {
 }
 
 /**
- * Read the named query params, answering 400 and returning null if any is
- * missing. The message names them in order, e.g. "year and week required".
+ * Read the named query params, answering 400 and returning null if any comes
+ * back falsy. The message names them in order, e.g. "year and week required".
+ *
+ * `read` decides what falsy means: by default an absent or empty string, and
+ * with `Number` a value that isn't a positive number (a period index is never
+ * 0) — already converted, so the numeric routes need no second pass.
  */
-function requireQuery(req: Request, res: Response, names: string[]): Record<string, string> | null {
+function requireQuery<T extends string | number = string>(
+  req: Request,
+  res: Response,
+  names: string[],
+  read: (v: string | undefined) => T = (v => v ?? '') as (v: string | undefined) => T,
+): Record<string, T> | null {
   const q = req.query as Record<string, string | undefined>;
-  if (names.some(n => !q[n])) {
+  const vals = Object.fromEntries(names.map(n => [n, read(q[n])])) as Record<string, T>;
+  if (names.some(n => !vals[n])) {
     res.status(400).json({ error: `${names.join(' and ')} required` });
     return null;
   }
-  return Object.fromEntries(names.map(n => [n, q[n] as string]));
-}
-
-/**
- * Same, but for params that must be positive numbers (a period index is never
- * 0), returning them already converted.
- */
-function requireNumbers(
-  req: Request, res: Response, names: string[],
-): Record<string, number> | null {
-  const q = req.query as Record<string, string | undefined>;
-  const nums = Object.fromEntries(names.map(n => [n, Number(q[n])]));
-  if (names.some(n => !nums[n])) {
-    res.status(400).json({ error: `${names.join(' and ')} required` });
-    return null;
-  }
-  return nums;
+  return vals;
 }
 
 /** The period routes all share a shape: check params, query rows, add stats. */
@@ -204,7 +198,7 @@ app.get('/api/across-years', (req, res) => {
   const spec = YOY_UNITS[String(req.query.unit ?? '')];
   if (!spec) return res.status(400).json({ error: 'unit must be day, week or month' });
 
-  const q = requireNumbers(req, res, spec.needs);
+  const q = requireQuery(req, res, spec.needs, Number);
   if (!q) return;
 
   const rowsFor = spec.rows(q);

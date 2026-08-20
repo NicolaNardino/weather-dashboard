@@ -113,6 +113,11 @@ export function queryWeek(year: number, week: number): WeatherRow[] {
   return queryRange(isoDate(monday), isoDate(sunday));
 }
 
+/** Every stored row. Only the import needs this — it diffs against what's there. */
+export function queryAllRows(): WeatherRow[] {
+  return all<WeatherRow>('SELECT * FROM weather');
+}
+
 export function queryAllDates(): { date: string }[] {
   return all<{ date: string }>('SELECT date FROM weather ORDER BY date');
 }
