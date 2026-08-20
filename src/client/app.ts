@@ -77,6 +77,42 @@ function line(label: string, data: (number | string | null)[], color: string, ex
   };
 }
 
+/**
+ * One dataset in a chart that can be drawn either way: a translucent bar, or a
+ * styled line. Both overlay views pick between the two forms per metric, and
+ * both spelled the same ternary out.
+ */
+function series(
+  type: string, label: string, data: (number | null)[], color: string, extra: any = {},
+): any {
+  return type === 'bar'
+    ? { label, data, backgroundColor: `${color}99` }
+    : line(label, data, color, extra);
+}
+
+/** `getElementById`, asserted — every id below is one this page owns. */
+const el = (id: string) => document.getElementById(id)!;
+
+/** Replace an element's markup. Every render function below ends in this. */
+const setHtml = (id: string, html: string): void => { el(id).innerHTML = html; };
+
+/**
+ * GET a JSON endpoint, turning a non-2xx into a throw that carries the server's
+ * own `{ error }` text. Every loader below made the same fetch / check `ok` /
+ * parse / fall back to `statusText` sequence.
+ */
+async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
+  const r = await fetch(url, init);
+  if (!r.ok) throw new Error((await r.json()).error || r.statusText);
+  return await r.json() as T;
+}
+
+/** "2026-04-07" → that day as a local Date (the pickers all work in local time). */
+function localDate(iso: string): Date {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+
 /** createElement + property assignment + children, in one expression. */
 function mkEl<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -213,8 +249,8 @@ let lastRows: WeatherRow[] = [];   // rows from the most recent dashboard load (
 // offer a period the dashboard didn't implement, which the click handler had
 // to guard against.
 function renderPeriodTabs(): void {
-  const el = document.getElementById('period-tabs')!;
-  el.innerHTML = '';
+  const tabs = el('period-tabs');
+  tabs.innerHTML = '';
   for (const key of Object.keys(PERIODS) as Period[]) {
     const btn = mkEl('button', {
       type: 'button',
@@ -229,15 +265,15 @@ function renderPeriodTabs(): void {
       renderControls();
       load();
     });
-    el.append(btn);
+    tabs.append(btn);
   }
 }
 
 // --- Controls ---
 function renderControls(): void {
-  const el = document.getElementById('controls')!;
-  el.innerHTML = '';
-  PERIODS[period].controls(el, allDates.map(d => d.date));
+  const controls = el('controls');
+  controls.innerHTML = '';
+  PERIODS[period].controls(controls, allDates.map(d => d.date));
 }
 
 function yearSelect(): HTMLSelectElement {
@@ -254,11 +290,8 @@ function yearSelect(): HTMLSelectElement {
 // when no data is loaded). Selectors default to this period so a fresh load
 // lands on populated data rather than the empty calendar-current period.
 function refDate(): Date {
-  if (allDates.length) {
-    const [y, m, d] = allDates[allDates.length - 1].date.split('-').map(Number);
-    return new Date(y, m - 1, d);
-  }
-  return new Date();
+  const latest = allDates[allDates.length - 1];
+  return latest ? localDate(latest.date) : new Date();
 }
 
 function isoWeek(d: Date): number {
@@ -274,8 +307,7 @@ function isoWeek(d: Date): number {
  * other.
  */
 async function reloadDates(): Promise<void> {
-  const resp = await fetch('/api/dates');
-  allDates = await resp.json() as DateRow[];
+  allDates = await fetchJson<DateRow[]>('/api/dates');
   renderControls();
   await load();
   await refreshStatus();
@@ -283,7 +315,7 @@ async function reloadDates(): Promise<void> {
 
 // --- Load data ---
 async function load(): Promise<void> {
-  const sels = Array.from(document.getElementById('controls')!.querySelectorAll('select'));
+  const sels = Array.from(el('controls').querySelectorAll('select'));
   const resp = await fetch(PERIODS[period].url(sels));
   if (!resp.ok) { lastRows = []; clearAll(); return; }
   const { rows, stats } = await resp.json() as { rows: WeatherRow[]; stats: Stats };
@@ -297,15 +329,15 @@ async function load(): Promise<void> {
 // --- Data freshness (last import time) ---
 async function refreshStatus(): Promise<void> {
   try {
-    const r = await fetch('/api/status');
-    const { last_import, records } = await r.json() as { last_import: string | null; records: number };
-    const el = document.getElementById('last-import')!;
+    const { last_import, records } =
+      await fetchJson<{ last_import: string | null; records: number }>('/api/status');
+    const stamp = el('last-import');
     if (last_import) {
       const when = new Date(last_import);
-      el.textContent = `Imported ${when.toLocaleString()} · ${records} records`;
-      el.title = `Last import: ${when.toString()}`;
+      stamp.textContent = `Imported ${when.toLocaleString()} · ${records} records`;
+      stamp.title = `Last import: ${when.toString()}`;
     } else {
-      el.textContent = 'Not yet imported';
+      stamp.textContent = 'Not yet imported';
     }
   } catch { /* non-critical */ }
 }
@@ -351,7 +383,7 @@ const STAT_CARDS: StatCard[] = [
 const statSpan = (prefix: string, key: string) => `<span id="s-${prefix}-${key}">—</span>`;
 
 function renderStatCards(): void {
-  document.getElementById('stat-cards')!.innerHTML = STAT_CARDS.map(c => `
+  setHtml('stat-cards', STAT_CARDS.map(c => `
     <div class="col-6 col-md-4 col-xl-2">
       <div class="card bg-secondary-subtle border-0 h-100">
         <div class="card-body p-3">
@@ -362,7 +394,7 @@ function renderStatCards(): void {
             .join('')}</div>
         </div>
       </div>
-    </div>`).join('');
+    </div>`).join(''));
 }
 
 function renderStats(s: Stats | undefined): void {
@@ -514,14 +546,14 @@ function chartCard(o: {
 }
 
 function renderChartCards(): void {
-  document.getElementById('chart-cards')!.innerHTML = CHART_META.map(c =>
+  setHtml('chart-cards', CHART_META.map(c =>
     chartCard({
       id: `chart-${c.key}`,
       title: `${c.label} (${c.unit})`,
       col: c.col,
       height: c.height,
       attr: ` data-chart="${c.key}"`,   // what applyChartVisibility() hides
-    })).join('');
+    })).join(''));
 }
 
 // --- Charts ---
@@ -564,22 +596,21 @@ const TABLE_COLUMNS: TableColumn[] = [
 ];
 
 function renderTableHead(): void {
-  const head = document.getElementById('table-head');
-  if (head) head.innerHTML = TABLE_COLUMNS.map(c => `<th>${c.label}</th>`).join('');
+  setHtml('table-head', TABLE_COLUMNS.map(c => `<th>${c.label}</th>`).join(''));
 }
 
 function renderTable(rows: WeatherRow[]): void {
-  document.getElementById('table-body')!.innerHTML = rows.map(r =>
+  setHtml('table-body', rows.map(r =>
     `<tr>${TABLE_COLUMNS.map(c => {
       const cls = typeof c.cls === 'function' ? c.cls(r) : (c.cls ?? '');
       return `<td class="${cls}">${c.cell(r)}</td>`;
     }).join('')}</tr>`
-  ).join('');
+  ).join(''));
 }
 
 function clearAll(): void {
   CHART_META.forEach(({ key }) => destroyChart(`chart-${key}`));
-  document.getElementById('table-body')!.innerHTML = '';
+  setHtml('table-body', '');
 }
 
 // --- Import button ---
@@ -629,8 +660,8 @@ const COMPARE_META: CompareSpec[] = [
 ];
 
 function renderCompareCards(): void {
-  document.getElementById('cmp-chart-cards')!.innerHTML = COMPARE_META.map(m =>
-    chartCard({ id: m.id, title: m.title, col: 'col-12 col-xl-6', height: 110 })).join('');
+  setHtml('cmp-chart-cards', COMPARE_META.map(m =>
+    chartCard({ id: m.id, title: m.title, col: 'col-12 col-xl-6', height: 110 })).join(''));
 }
 
 const MINE_COLOR = '#38bdf8';
@@ -653,14 +684,14 @@ function deltaCell(diff: number | null, fmt: (n: number) => string): string {
 type ViewName = 'dashboard' | 'compare' | 'yoy';
 let currentView: ViewName = 'dashboard';
 
-const compareBtn = document.getElementById('btn-compare')!;
-const yoyBtn = document.getElementById('btn-yoy')!;
+const compareBtn = el('btn-compare');
+const yoyBtn = el('btn-yoy');
 
 function showView(v: ViewName): void {
   currentView = v;
-  document.getElementById('dashboard-view')!.classList.toggle('d-none', v !== 'dashboard');
-  document.getElementById('compare-view')!.classList.toggle('d-none', v !== 'compare');
-  document.getElementById('yoy-view')!.classList.toggle('d-none', v !== 'yoy');
+  el('dashboard-view').classList.toggle('d-none', v !== 'dashboard');
+  el('compare-view').classList.toggle('d-none', v !== 'compare');
+  el('yoy-view').classList.toggle('d-none', v !== 'yoy');
   compareBtn.classList.toggle('active', v === 'compare');
   yoyBtn.classList.toggle('active', v === 'yoy');
   if (v === 'compare') loadCompare();
@@ -672,21 +703,19 @@ compareBtn.addEventListener('click', () => showView(currentView === 'compare' ? 
 yoyBtn.addEventListener('click', () => showView(currentView === 'yoy' ? 'dashboard' : 'yoy'));
 
 async function loadCompare(): Promise<void> {
-  const status = document.getElementById('cmp-status')!;
+  const status = el('cmp-status');
   if (!lastRows.length) {
     status.textContent = 'No local data selected — pick a period on the dashboard first.';
     return;
   }
   const from = lastRows[0].date;
   const to = lastRows[lastRows.length - 1].date;
-  document.getElementById('cmp-range')!.textContent = `${from} → ${to}`;
+  el('cmp-range').textContent = `${from} → ${to}`;
   status.textContent = 'Loading public data…';
 
   let data: { location: string; source: string; mine: WeatherRow[]; public: PublicRow[] };
   try {
-    const r = await fetch(`/api/compare?from=${from}&to=${to}`);
-    if (!r.ok) throw new Error((await r.json()).error || r.statusText);
-    data = await r.json();
+    data = await fetchJson(`/api/compare?from=${from}&to=${to}`);
   } catch (e) {
     status.textContent = `Could not fetch public data: ${(e as Error).message}`;
     return;
@@ -700,16 +729,15 @@ async function loadCompare(): Promise<void> {
   const pubOf  = (key: SharedKey) => lastRows.map(r => (pub.get(r.date)?.[key] ?? null) as number | null);
 
   for (const m of COMPARE_META) {
-    const datasets = m.type === 'bar'
-      ? [
-          { label: 'Me',   data: mineOf(m.key), backgroundColor: `${MINE_COLOR}99` },
-          { label: 'Baar', data: pubOf(m.key),  backgroundColor: `${PUBLIC_COLOR}99` },
-        ]
-      : [
-          line(`Me · ${m.series}`,   mineOf(m.key), MINE_COLOR),
-          line(`Baar · ${m.series}`, pubOf(m.key),  PUBLIC_COLOR, { borderDash: [5, 3] }),
-        ];
-    mkChart(m.id, m.type, { labels: lbl, datasets });
+    // Lines name their measure ("Me · High"); the bar chart has only one.
+    const suffix = m.series ? ` · ${m.series}` : '';
+    mkChart(m.id, m.type, {
+      labels: lbl,
+      datasets: [
+        series(m.type, `Me${suffix}`, mineOf(m.key), MINE_COLOR),
+        series(m.type, `Baar${suffix}`, pubOf(m.key), PUBLIC_COLOR, { borderDash: [5, 3] }),
+      ],
+    });
   }
 
   renderCompareSummary(mineOf, pubOf);
@@ -725,13 +753,13 @@ function renderCompareSummary(
   };
   const fmt = (n: number | null) => (n == null ? '—' : n.toFixed(1));
 
-  document.getElementById('cmp-summary-body')!.innerHTML = COMPARE_META.map(({ row: name, key }) => {
+  setHtml('cmp-summary-body', COMPARE_META.map(({ row: name, key }) => {
     const mine = avg(mineOf(key));
     const theirs = avg(pubOf(key));
     const diff = (mine != null && theirs != null) ? mine - theirs : null;
     return `<tr><td>${name}</td><td>${fmt(mine)}</td><td>${fmt(theirs)}</td>${
       deltaCell(diff, n => n.toFixed(1))}</tr>`;
-  }).join('');
+  }).join(''));
 }
 
 // --- Across years (year-over-year) ---
@@ -776,10 +804,7 @@ const YOY_UNITS = {
     label: 'Week',
     controls: el => el.append(mkSelect(weekOptions(), String(isoWeek(refDate())), loadYoy)),
     query: v => `unit=week&week=${v[0]}`,
-    pos: r => {
-      const [y, m, d] = r.date.split('-').map(Number);
-      return new Date(y, m - 1, d).getDay() || 7;        // Mon=1..Sun=7
-    },
+    pos: r => localDate(r.date).getDay() || 7,           // Mon=1..Sun=7
     axis: () => ({
       positions: [1, 2, 3, 4, 5, 6, 7],
       labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
@@ -834,52 +859,50 @@ const YOY_SUMMARY: { label: string; unit: string; get: (s: Stats) => number }[] 
 let yoyUnit: YoyUnit = 'month';
 
 function renderYoyCards(): void {
-  document.getElementById('yoy-chart-cards')!.innerHTML = YOY_METRICS.map(m =>
-    chartCard({ id: m.id, title: m.title, col: 'col-12 col-md-6 col-xl-4', height: 120 })).join('');
+  setHtml('yoy-chart-cards', YOY_METRICS.map(m =>
+    chartCard({ id: m.id, title: m.title, col: 'col-12 col-md-6 col-xl-4', height: 120 })).join(''));
 }
 
 /** Rebuild the unit selector and the value pickers it implies. */
 function renderYoyControls(): void {
-  const el = document.getElementById('yoy-controls')!;
-  el.innerHTML = '';
+  const controls = el('yoy-controls');
+  controls.innerHTML = '';
 
   const unitSel = mkSelect(
     (Object.keys(YOY_UNITS) as YoyUnit[]).map(k => ({ value: k, label: YOY_UNITS[k].label })),
     yoyUnit,
     () => { yoyUnit = unitSel.value as YoyUnit; renderYoyControls(); loadYoy(); },
   );
-  el.append(mutedLabel('Compare'), unitSel);
-  YOY_UNITS[yoyUnit].controls(el);
+  controls.append(mutedLabel('Compare'), unitSel);
+  YOY_UNITS[yoyUnit].controls(controls);
 }
 
 /** Turn the current value pickers into the /api/across-years call. */
 function yoyUrl(): string {
-  const vals = Array.from(document.getElementById('yoy-controls')!.querySelectorAll('select'))
+  const vals = Array.from(el('yoy-controls').querySelectorAll('select'))
     .slice(1)                                   // [0] is the unit selector
     .map(s => s.value);
   return `/api/across-years?${YOY_UNITS[yoyUnit].query(vals)}`;
 }
 
 async function loadYoy(): Promise<void> {
-  const status = document.getElementById('yoy-status')!;
+  const status = el('yoy-status');
   status.textContent = 'Loading…';
 
   let data: YoyResponse;
   try {
-    const r = await fetch(yoyUrl());
-    if (!r.ok) throw new Error((await r.json()).error || r.statusText);
-    data = await r.json() as YoyResponse;
+    data = await fetchJson<YoyResponse>(yoyUrl());
   } catch (e) {
     status.textContent = `Could not load: ${(e as Error).message}`;
     return;
   }
 
-  document.getElementById('yoy-heading')!.textContent = `${data.label} across years`;
+  el('yoy-heading').textContent = `${data.label} across years`;
   if (!data.years.length) {
     status.textContent = 'No data for this period.';
     YOY_METRICS.forEach(m => destroyChart(m.id));
-    document.getElementById('yoy-summary-head')!.innerHTML = '';
-    document.getElementById('yoy-summary-body')!.innerHTML = '';
+    setHtml('yoy-summary-head', '');
+    setHtml('yoy-summary-body', '');
     return;
   }
   status.textContent = data.years.length < 2
@@ -893,12 +916,13 @@ async function loadYoy(): Promise<void> {
   const byPos = data.years.map(yb => new Map(yb.rows.map(row => [spec.pos(row), row])));
 
   for (const metric of YOY_METRICS) {
-    const datasets = data.years.map((yb, i) => {
-      const arr = positions.map(p => { const row = byPos[i].get(p); return row ? metric.get(row) : null; });
-      return metric.type === 'bar'
-        ? { label: String(yb.year), data: arr, backgroundColor: `${yearColor(i)}99` }
-        : line(String(yb.year), arr, yearColor(i));
-    });
+    const datasets = data.years.map((yb, i) =>
+      series(
+        metric.type,
+        String(yb.year),
+        positions.map(p => { const row = byPos[i].get(p); return row ? metric.get(row) : null; }),
+        yearColor(i),
+      ));
     mkChart(metric.id, metric.type, { labels: xlabels, datasets });
   }
 
@@ -911,10 +935,9 @@ function renderYoySummary(data: YoyResponse): void {
   // With ≥2 years, a trailing column shows the change from the earliest to the
   // latest year — the headline "how did this period differ" number.
   const hasDelta = data.years.length >= 2;
-  document.getElementById('yoy-summary-head')!.innerHTML =
-    `<th>Metric</th>${yearCols}${hasDelta ? '<th>Δ latest−earliest</th>' : ''}`;
+  setHtml('yoy-summary-head', `<th>Metric</th>${yearCols}${hasDelta ? '<th>Δ latest−earliest</th>' : ''}`);
 
-  document.getElementById('yoy-summary-body')!.innerHTML = YOY_SUMMARY.map(m => {
+  setHtml('yoy-summary-body', YOY_SUMMARY.map(m => {
     const vals = data.years.map(y => m.get(y.stats));
     const suffix = m.unit ? ` ${m.unit}` : '';
     const cells = vals.map(v => `<td>${v}${suffix}</td>`).join('');
@@ -922,7 +945,7 @@ function renderYoySummary(data: YoyResponse): void {
       ? deltaCell(round(vals[vals.length - 1] - vals[0]), n => `${n}${suffix}`)
       : '';
     return `<tr><td>${m.label}</td>${cells}${delta}</tr>`;
-  }).join('');
+  }).join(''));
 }
 
 // --- Init ---

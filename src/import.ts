@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { COLUMNS, Field, FIELDS, getDb, setMeta, WeatherRow } from './db';
+import { COLUMNS, Field, FIELDS, getDb, queryAllRows, setMeta } from './db';
 
 function parseNum(s: string): number {
   return parseFloat(s.replace(/,/g, '').replace(/[^\d.-]/g, ''));
@@ -27,10 +27,9 @@ export function importFile(filePath: string): ImportResult {
   );
 
   // Snapshot existing rows up front so we can tell new/changed from unchanged.
-  const existing = new Map<string, Record<Field, number>>();
-  for (const r of db.prepare('SELECT * FROM weather').all() as unknown as WeatherRow[]) {
-    existing.set(r.date, r);
-  }
+  const existing = new Map<string, Record<Field, number>>(
+    queryAllRows().map(r => [r.date, r]),
+  );
 
   const lines = fs.readFileSync(filePath, 'utf8').split('\n');
   const result: ImportResult = { total: 0, inserted: 0, updated: 0, unchanged: 0 };
