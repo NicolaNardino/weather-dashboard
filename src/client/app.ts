@@ -107,7 +107,20 @@ function mkSelect(
 /** Value/label pairs where both are the same string (dates, years). */
 const asOptions = (values: string[]) => values.map(v => ({ value: v, label: v }));
 
+/** `count` options numbered 1..count, labelled by `label` (default: the number). */
+const numberOptions = (count: number, label: (n: number) => string = String) =>
+  Array.from({ length: count }, (_, i) => ({ value: String(i + 1), label: label(i + 1) }));
+
 const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+// The three numbered pickers the dashboard and the year-over-year view share.
+const monthOptions = () => numberOptions(12, n => MONTH_NAMES[n - 1]);
+const weekOptions = () => numberOptions(53, n => `Week ${n}`);
+const dayOptions = () => numberOptions(31);
+
+/** A small dimmed caption sitting next to a picker. */
+const mutedLabel = (text: string) =>
+  mkEl('span', { className: 'text-muted small', textContent: text });
 
 /**
  * One entry per period selector. `controls` populates the header with that
@@ -132,22 +145,13 @@ const PERIODS = {
 
   week: {
     label: 'Week',
-    controls: el => {
-      const weeks = Array.from({ length: 53 }, (_, i) => ({
-        value: String(i + 1),
-        label: `Week ${i + 1}`,
-      }));
-      el.append(yearSelect(), mkSelect(weeks, String(isoWeek(refDate())), load));
-    },
+    controls: el => el.append(yearSelect(), mkSelect(weekOptions(), String(isoWeek(refDate())), load)),
     url: s => `/api/week?year=${s[0]?.value}&week=${s[1]?.value}`,
   },
 
   month: {
     label: 'Month',
-    controls: el => {
-      const months = MONTH_NAMES.map((n, i) => ({ value: String(i + 1), label: n }));
-      el.append(yearSelect(), mkSelect(months, String(refDate().getMonth() + 1), load));
-    },
+    controls: el => el.append(yearSelect(), mkSelect(monthOptions(), String(refDate().getMonth() + 1), load)),
     url: s => `/api/month?year=${s[0]?.value}&month=${s[1]?.value}`,
   },
 
@@ -165,7 +169,6 @@ const PERIODS = {
     controls: (el, dates) => {
       const fromSel = mkSelect(asOptions(dates), dates[Math.max(0, dates.length - 30)], load);
       const toSel = mkSelect(asOptions(dates), dates[dates.length - 1], load);
-      const label = (text: string) => mkEl('span', { className: 'text-muted small', textContent: text });
 
       // "All" checkbox — when checked, span the entire dataset and disable the
       // From/To pickers since the window is no longer user-controlled.
@@ -181,7 +184,7 @@ const PERIODS = {
         load();
       });
 
-      el.append(allWrap, label('From'), fromSel, label('To'), toSel);
+      el.append(allWrap, mutedLabel('From'), fromSel, mutedLabel('To'), toSel);
     },
     url: s => {
       let from: string | undefined, to: string | undefined;
@@ -633,6 +636,17 @@ function renderCompareCards(): void {
 const MINE_COLOR = '#38bdf8';
 const PUBLIC_COLOR = '#fb923c';
 
+/**
+ * A signed-difference table cell — warm when it rose, cool when it fell, "—"
+ * when either side is missing. Both comparison tables (mine-vs-public and
+ * year-over-year) render their delta column this way.
+ */
+function deltaCell(diff: number | null, fmt: (n: number) => string): string {
+  if (diff == null) return '<td>—</td>';
+  const cls = diff > 0 ? 'text-danger' : diff < 0 ? 'text-info' : '';
+  return `<td class="${cls}">${diff > 0 ? '+' : ''}${fmt(diff)}</td>`;
+}
+
 // The page has three mutually-exclusive views. Toggling one on turns the
 // others off; both overlay buttons stay in sync from this single place, and
 // the dashboard's period tabs (below) route back here.
@@ -715,9 +729,8 @@ function renderCompareSummary(
     const mine = avg(mineOf(key));
     const theirs = avg(pubOf(key));
     const diff = (mine != null && theirs != null) ? mine - theirs : null;
-    const diffCls = diff == null ? '' : diff > 0 ? 'text-danger' : diff < 0 ? 'text-info' : '';
-    const diffTxt = diff == null ? '—' : `${diff > 0 ? '+' : ''}${diff.toFixed(1)}`;
-    return `<tr><td>${name}</td><td>${fmt(mine)}</td><td>${fmt(theirs)}</td><td class="${diffCls}">${diffTxt}</td></tr>`;
+    return `<tr><td>${name}</td><td>${fmt(mine)}</td><td>${fmt(theirs)}</td>${
+      deltaCell(diff, n => n.toFixed(1))}</tr>`;
   }).join('');
 }
 
@@ -727,7 +740,65 @@ function renderCompareSummary(
 // overlaid series (aligned on a shared within-period axis) plus one column in
 // the averages table.
 interface YearBlock { year: number; rows: WeatherRow[]; stats: Stats; }
-interface YoyResponse { unit: 'day' | 'week' | 'month'; label: string; years: YearBlock[]; }
+interface YoyResponse { unit: YoyUnit; label: string; years: YearBlock[]; }
+
+/**
+ * One entry per comparison unit — its tab label, its value pickers, the query
+ * those pickers imply, where a row sits inside the period and the shared
+ * x-axis. Like PERIODS above, the unit is dispatched once here rather than in
+ * four if/else chains (controls, url, position, axis) that had to stay in step.
+ */
+interface YoyUnitSpec {
+  label: string;
+  /** Appends this unit's value pickers after the unit selector. */
+  controls: (el: HTMLElement) => void;
+  /** Those pickers' values → the /api/across-years query string. */
+  query: (vals: string[]) => string;
+  /** The row's slot inside its period, so the same slot lines up across years. */
+  pos: (r: WeatherRow) => number;
+  /** The shared x-axis for this unit: slot positions and their labels. */
+  axis: (label: string) => { positions: number[]; labels: string[] };
+}
+
+const YOY_UNITS = {
+  day: {
+    label: 'Day',
+    controls: el => el.append(
+      mkSelect(monthOptions(), String(refDate().getMonth() + 1), loadYoy),
+      mkSelect(dayOptions(), String(refDate().getDate()), loadYoy),
+    ),
+    query: v => `unit=day&month=${v[0]}&day=${v[1]}`,
+    pos: () => 1,                                        // a single slot
+    axis: label => ({ positions: [1], labels: [label] }),
+  },
+
+  week: {
+    label: 'Week',
+    controls: el => el.append(mkSelect(weekOptions(), String(isoWeek(refDate())), loadYoy)),
+    query: v => `unit=week&week=${v[0]}`,
+    pos: r => {
+      const [y, m, d] = r.date.split('-').map(Number);
+      return new Date(y, m - 1, d).getDay() || 7;        // Mon=1..Sun=7
+    },
+    axis: () => ({
+      positions: [1, 2, 3, 4, 5, 6, 7],
+      labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+    }),
+  },
+
+  month: {
+    label: 'Month',
+    controls: el => el.append(mkSelect(monthOptions(), String(refDate().getMonth() + 1), loadYoy)),
+    query: v => `unit=month&month=${v[0]}`,
+    pos: r => Number(r.date.slice(8, 10)),               // day of month, 1..31
+    axis: () => {
+      const positions = Array.from({ length: 31 }, (_, i) => i + 1);
+      return { positions, labels: positions.map(String) };
+    },
+  },
+} satisfies Record<string, YoyUnitSpec>;
+
+type YoyUnit = keyof typeof YOY_UNITS;
 
 // A distinct, cycled colour per year across all the charts.
 const YEAR_COLORS = ['#38bdf8', '#fb923c', '#4ade80', '#f472b6', '#facc15', '#a78bfa'];
@@ -760,7 +831,7 @@ const YOY_SUMMARY: { label: string; unit: string; get: (s: Stats) => number }[] 
 ];
 
 // The current comparison unit; its value pickers are rebuilt when it changes.
-let yoyUnit: YoyResponse['unit'] = 'month';
+let yoyUnit: YoyUnit = 'month';
 
 function renderYoyCards(): void {
   document.getElementById('yoy-chart-cards')!.innerHTML = YOY_METRICS.map(m =>
@@ -771,57 +842,22 @@ function renderYoyCards(): void {
 function renderYoyControls(): void {
   const el = document.getElementById('yoy-controls')!;
   el.innerHTML = '';
-  const label = (t: string) => mkEl('span', { className: 'text-muted small', textContent: t });
 
   const unitSel = mkSelect(
-    [{ value: 'day', label: 'Day' }, { value: 'week', label: 'Week' }, { value: 'month', label: 'Month' }],
+    (Object.keys(YOY_UNITS) as YoyUnit[]).map(k => ({ value: k, label: YOY_UNITS[k].label })),
     yoyUnit,
-    () => { yoyUnit = unitSel.value as YoyResponse['unit']; renderYoyControls(); loadYoy(); },
+    () => { yoyUnit = unitSel.value as YoyUnit; renderYoyControls(); loadYoy(); },
   );
-  el.append(label('Compare'), unitSel);
-
-  const monthOpts = MONTH_NAMES.map((n, i) => ({ value: String(i + 1), label: n }));
-  if (yoyUnit === 'month') {
-    el.append(mkSelect(monthOpts, String(refDate().getMonth() + 1), loadYoy));
-  } else if (yoyUnit === 'week') {
-    const weeks = Array.from({ length: 53 }, (_, i) => ({ value: String(i + 1), label: `Week ${i + 1}` }));
-    el.append(mkSelect(weeks, String(isoWeek(refDate())), loadYoy));
-  } else {
-    const days = Array.from({ length: 31 }, (_, i) => ({ value: String(i + 1), label: String(i + 1) }));
-    el.append(
-      mkSelect(monthOpts, String(refDate().getMonth() + 1), loadYoy),
-      mkSelect(days, String(refDate().getDate()), loadYoy),
-    );
-  }
+  el.append(mutedLabel('Compare'), unitSel);
+  YOY_UNITS[yoyUnit].controls(el);
 }
 
 /** Turn the current value pickers into the /api/across-years call. */
 function yoyUrl(): string {
-  const vals = Array.from(document.getElementById('yoy-controls')!.querySelectorAll('select')).slice(1);
-  if (yoyUnit === 'month') return `/api/across-years?unit=month&month=${vals[0]?.value}`;
-  if (yoyUnit === 'week')  return `/api/across-years?unit=week&week=${vals[0]?.value}`;
-  return `/api/across-years?unit=day&month=${vals[0]?.value}&day=${vals[1]?.value}`;
-}
-
-// Where a row sits inside its period, so the same slot lines up across years:
-// day-of-month for months, weekday for weeks, a single slot for a day.
-function yoyPos(unit: YoyResponse['unit'], r: WeatherRow): number {
-  const [y, m, d] = r.date.split('-').map(Number);
-  if (unit === 'month') return d;                       // 1..31
-  if (unit === 'week')  return new Date(y, m - 1, d).getDay() || 7; // Mon=1..Sun=7
-  return 1;                                             // day: one slot
-}
-
-/** The shared x-axis for a unit: its slot positions and their labels. */
-function yoyAxis(unit: YoyResponse['unit'], label: string): { positions: number[]; labels: string[] } {
-  if (unit === 'month') {
-    const positions = Array.from({ length: 31 }, (_, i) => i + 1);
-    return { positions, labels: positions.map(String) };
-  }
-  if (unit === 'week') {
-    return { positions: [1, 2, 3, 4, 5, 6, 7], labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] };
-  }
-  return { positions: [1], labels: [label] };
+  const vals = Array.from(document.getElementById('yoy-controls')!.querySelectorAll('select'))
+    .slice(1)                                   // [0] is the unit selector
+    .map(s => s.value);
+  return `/api/across-years?${YOY_UNITS[yoyUnit].query(vals)}`;
 }
 
 async function loadYoy(): Promise<void> {
@@ -850,14 +886,11 @@ async function loadYoy(): Promise<void> {
     ? `Only ${data.years[0].year} has data for this period — add another year to compare.`
     : '';
 
-  const { positions, labels: xlabels } = yoyAxis(data.unit, data.label);
+  const spec = YOY_UNITS[data.unit];
+  const { positions, labels: xlabels } = spec.axis(data.label);
   // Per year: within-period slot → that day's row, so each x-slot can pull each
   // year's value (or null where a year is missing that day).
-  const byPos = data.years.map(yb => {
-    const map = new Map<number, WeatherRow>();
-    for (const row of yb.rows) map.set(yoyPos(data.unit, row), row);
-    return map;
-  });
+  const byPos = data.years.map(yb => new Map(yb.rows.map(row => [spec.pos(row), row])));
 
   for (const metric of YOY_METRICS) {
     const datasets = data.years.map((yb, i) => {
@@ -885,12 +918,9 @@ function renderYoySummary(data: YoyResponse): void {
     const vals = data.years.map(y => m.get(y.stats));
     const suffix = m.unit ? ` ${m.unit}` : '';
     const cells = vals.map(v => `<td>${v}${suffix}</td>`).join('');
-    let delta = '';
-    if (hasDelta) {
-      const d = round(vals[vals.length - 1] - vals[0]);
-      const cls = d > 0 ? 'text-danger' : d < 0 ? 'text-info' : '';
-      delta = `<td class="${cls}">${d > 0 ? '+' : ''}${d}${suffix}</td>`;
-    }
+    const delta = hasDelta
+      ? deltaCell(round(vals[vals.length - 1] - vals[0]), n => `${n}${suffix}`)
+      : '';
     return `<tr><td>${m.label}</td>${cells}${delta}</tr>`;
   }).join('');
 }

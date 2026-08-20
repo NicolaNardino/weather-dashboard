@@ -161,12 +161,14 @@ export function upsertPublic(location: string, rows: PublicRow[]): void {
 export function aggregateStats(rows: WeatherRow[]) {
   if (!rows.length) return null;
 
-  type Field = (r: WeatherRow) => number;
+  // A measure to aggregate: reads one number out of a row. (Named `Get` rather
+  // than `Field` so it doesn't shadow the exported column-name union.)
+  type Get = (r: WeatherRow) => number;
   const round = (v: number, dp: number) => Math.round(v * 10 ** dp) / 10 ** dp;
-  const max = (f: Field) => Math.max(...rows.map(f));
-  const min = (f: Field) => Math.min(...rows.map(f));
-  const sum = (f: Field) => rows.reduce((a, r) => a + f(r), 0);
-  const avg = (f: Field, dp = 1) => round(sum(f) / rows.length, dp);
+  const max = (f: Get) => Math.max(...rows.map(f));
+  const min = (f: Get) => Math.min(...rows.map(f));
+  const sum = (f: Get) => rows.reduce((a, r) => a + f(r), 0);
+  const avg = (f: Get, dp = 1) => round(sum(f) / rows.length, dp);
 
   return {
     count: rows.length,
