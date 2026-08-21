@@ -4,8 +4,6 @@
 
 declare const Chart: any;
 
-interface DateRow { date: string; }
-
 interface WeatherRow {
   date: string;
   temp_high: number; temp_avg: number; temp_low: number;
@@ -150,9 +148,11 @@ const numberOptions = (count: number, label: (n: number) => string = String) =>
 const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 // The three numbered pickers the dashboard and the year-over-year view share.
-const monthOptions = () => numberOptions(12, n => MONTH_NAMES[n - 1]);
-const weekOptions = () => numberOptions(53, n => `Week ${n}`);
-const dayOptions = () => numberOptions(31);
+// Fixed lists — the calendar doesn't change — so they are built once rather
+// than rebuilt on every render.
+const MONTH_OPTIONS = numberOptions(12, n => MONTH_NAMES[n - 1]);
+const WEEK_OPTIONS = numberOptions(53, n => `Week ${n}`);
+const DAY_OPTIONS = numberOptions(31);
 
 /** A small dimmed caption sitting next to a picker. */
 const mutedLabel = (text: string) =>
@@ -181,13 +181,13 @@ const PERIODS = {
 
   week: {
     label: 'Week',
-    controls: el => el.append(yearSelect(), mkSelect(weekOptions(), String(isoWeek(refDate())), load)),
+    controls: el => el.append(yearSelect(), mkSelect(WEEK_OPTIONS, String(isoWeek(refDate())), load)),
     url: s => `/api/week?year=${s[0]?.value}&week=${s[1]?.value}`,
   },
 
   month: {
     label: 'Month',
-    controls: el => el.append(yearSelect(), mkSelect(monthOptions(), String(refDate().getMonth() + 1), load)),
+    controls: el => el.append(yearSelect(), mkSelect(MONTH_OPTIONS, String(refDate().getMonth() + 1), load)),
     url: s => `/api/month?year=${s[0]?.value}&month=${s[1]?.value}`,
   },
 
@@ -223,14 +223,11 @@ const PERIODS = {
       el.append(allWrap, mutedLabel('From'), fromSel, mutedLabel('To'), toSel);
     },
     url: s => {
-      let from: string | undefined, to: string | undefined;
-      if ((document.getElementById('range-all') as HTMLInputElement | null)?.checked && allDates.length) {
-        from = allDates[0].date;                       // whole dataset
-        to = allDates[allDates.length - 1].date;
-      } else {
-        from = s[0]?.value; to = s[1]?.value;
-        if (from && to && from > to) [from, to] = [to, from]; // tolerate reversed picks
-      }
+      const all = (document.getElementById('range-all') as HTMLInputElement | null)?.checked;
+      let [from, to] = all && allDates.length
+        ? [allDates[0], allDates[allDates.length - 1]]   // whole dataset
+        : [s[0]?.value, s[1]?.value];
+      if (from && to && from > to) [from, to] = [to, from]; // tolerate reversed picks
       return `/api/range?from=${from}&to=${to}`;
     },
   },
@@ -240,7 +237,8 @@ type Period = keyof typeof PERIODS;
 
 // --- State ---
 let period: Period = 'week';
-let allDates: DateRow[] = [];
+/** Every date the data holds, ascending — the pool every picker draws from. */
+let allDates: string[] = [];
 let lastRows: WeatherRow[] = [];   // rows from the most recent dashboard load (drives Compare range)
 
 // --- Nav tabs ---
@@ -273,12 +271,12 @@ function renderPeriodTabs(): void {
 function renderControls(): void {
   const controls = el('controls');
   controls.innerHTML = '';
-  PERIODS[period].controls(controls, allDates.map(d => d.date));
+  PERIODS[period].controls(controls, allDates);
 }
 
 function yearSelect(): HTMLSelectElement {
   const thisYear = String(new Date().getFullYear());
-  const years = [...new Set(allDates.map(d => d.date.slice(0, 4)))];
+  const years = [...new Set(allDates.map(d => d.slice(0, 4)))];
   return mkSelect(
     asOptions(years.length ? years : [thisYear]),
     years[years.length - 1] || thisYear,
@@ -291,7 +289,7 @@ function yearSelect(): HTMLSelectElement {
 // lands on populated data rather than the empty calendar-current period.
 function refDate(): Date {
   const latest = allDates[allDates.length - 1];
-  return latest ? localDate(latest.date) : new Date();
+  return latest ? localDate(latest) : new Date();
 }
 
 function isoWeek(d: Date): number {
@@ -307,7 +305,7 @@ function isoWeek(d: Date): number {
  * other.
  */
 async function reloadDates(): Promise<void> {
-  allDates = await fetchJson<DateRow[]>('/api/dates');
+  allDates = (await fetchJson<{ date: string }[]>('/api/dates')).map(d => d.date);
   renderControls();
   await load();
   await refreshStatus();
@@ -505,9 +503,8 @@ function applyChartVisibility(): void {
 }
 
 function renderChartToggles(): void {
-  const el = document.getElementById('chart-toggles');
-  if (!el) return;
-  el.innerHTML = '';
+  const toggles = el('chart-toggles');
+  toggles.innerHTML = '';
   CHART_META.forEach(c => {
     const btn = mkEl('button', { type: 'button', className: 'btn btn-outline-secondary', textContent: c.label });
     const sync = () => {
@@ -521,7 +518,7 @@ function renderChartToggles(): void {
       writeStore('chartVisibility', chartVisibility);
       applyChartVisibility();
     });
-    el.appendChild(btn);
+    toggles.append(btn);
   });
 }
 
@@ -625,7 +622,7 @@ importBtn.addEventListener('click', async () => {
     importBtn.textContent = `✓ ${j.inserted} new · ${j.updated} upd`;
     importBtn.title = `${j.total} rows processed — ${j.inserted} new, ${j.updated} updated, ${j.unchanged} unchanged`;
     await reloadDates();
-  } catch (e) {
+  } catch {
     importBtn.textContent = '✗ Error';
   } finally {
     setTimeout(() => { importBtn.textContent = '↻ Import'; importBtn.disabled = false; }, 2000);
@@ -792,8 +789,8 @@ const YOY_UNITS = {
   day: {
     label: 'Day',
     controls: el => el.append(
-      mkSelect(monthOptions(), String(refDate().getMonth() + 1), loadYoy),
-      mkSelect(dayOptions(), String(refDate().getDate()), loadYoy),
+      mkSelect(MONTH_OPTIONS, String(refDate().getMonth() + 1), loadYoy),
+      mkSelect(DAY_OPTIONS, String(refDate().getDate()), loadYoy),
     ),
     query: v => `unit=day&month=${v[0]}&day=${v[1]}`,
     pos: () => 1,                                        // a single slot
@@ -802,7 +799,7 @@ const YOY_UNITS = {
 
   week: {
     label: 'Week',
-    controls: el => el.append(mkSelect(weekOptions(), String(isoWeek(refDate())), loadYoy)),
+    controls: el => el.append(mkSelect(WEEK_OPTIONS, String(isoWeek(refDate())), loadYoy)),
     query: v => `unit=week&week=${v[0]}`,
     pos: r => localDate(r.date).getDay() || 7,           // Mon=1..Sun=7
     axis: () => ({
@@ -813,7 +810,7 @@ const YOY_UNITS = {
 
   month: {
     label: 'Month',
-    controls: el => el.append(mkSelect(monthOptions(), String(refDate().getMonth() + 1), loadYoy)),
+    controls: el => el.append(mkSelect(MONTH_OPTIONS, String(refDate().getMonth() + 1), loadYoy)),
     query: v => `unit=month&month=${v[0]}`,
     pos: r => Number(r.date.slice(8, 10)),               // day of month, 1..31
     axis: () => {
