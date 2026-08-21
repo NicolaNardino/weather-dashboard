@@ -71,16 +71,16 @@ const STAT_READY = () => document.getElementById('s-temp-avg')?.textContent !== 
 
   await browser.close();
 
-  if (errors.length) {
-    console.error(`Console errors (${errors.length}):`);
-    for (const e of errors) console.error(`  ${e}`);
-  } else {
-    console.log('No console errors');
-  }
-  if (failures.length) {
-    console.error(`Failures (${failures.length}):`);
-    for (const f of failures) console.error(`  ${f}`);
-  }
+  /** Print a labelled group of problems, one per line. */
+  const report = (label: string, items: string[]) => {
+    if (!items.length) return;
+    console.error(`${label} (${items.length}):`);
+    for (const item of items) console.error(`  ${item}`);
+  };
+
+  if (!errors.length) console.log('No console errors');
+  report('Console errors', errors);
+  report('Failures', failures);
 
   if (errors.length || failures.length) process.exit(1);
   console.log('Dashboard verified: all periods rendered with populated stats.');
