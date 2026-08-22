@@ -616,8 +616,9 @@ importBtn.addEventListener('click', async () => {
   importBtn.textContent = '…';
   importBtn.disabled = true;
   try {
-    const r = await fetch('/api/import', { method: 'POST' });
-    const j = await r.json() as { total: number; inserted: number; updated: number; unchanged: number };
+    const j = await fetchJson<{ total: number; inserted: number; updated: number; unchanged: number }>(
+      '/api/import', { method: 'POST' },
+    );
     // Report what actually changed, not just the row count in the file.
     importBtn.textContent = `✓ ${j.inserted} new · ${j.updated} upd`;
     importBtn.title = `${j.total} rows processed — ${j.inserted} new, ${j.updated} updated, ${j.unchanged} unchanged`;
@@ -675,49 +676,68 @@ function deltaCell(diff: number | null, fmt: (n: number) => string): string {
   return `<td class="${cls}">${diff > 0 ? '+' : ''}${fmt(diff)}</td>`;
 }
 
-// The page has three mutually-exclusive views. Toggling one on turns the
-// others off; both overlay buttons stay in sync from this single place, and
-// the dashboard's period tabs (below) route back here.
-type ViewName = 'dashboard' | 'compare' | 'yoy';
-let currentView: ViewName = 'dashboard';
+// The page has three mutually-exclusive views, each `<name>-view` in the markup:
+// the dashboard, plus two overlays reached from their own navbar button. One
+// entry per overlay drives the button's active state, its toggle handler and
+// what showing it loads — they used to be spelled out in four places (three
+// `classList.toggle` lines, two button syncs, two `if (v === …)` loads and two
+// click handlers) that all had to name the same view.
+const OVERLAYS = [
+  { name: 'compare', btn: el('btn-compare'), show: () => loadCompare() },
+  { name: 'yoy', btn: el('btn-yoy'), show: () => { renderYoyControls(); loadYoy(); } },
+] as const;
 
-const compareBtn = el('btn-compare');
-const yoyBtn = el('btn-yoy');
+type ViewName = 'dashboard' | (typeof OVERLAYS)[number]['name'];
+let currentView: ViewName = 'dashboard';
 
 function showView(v: ViewName): void {
   currentView = v;
-  el('dashboard-view').classList.toggle('d-none', v !== 'dashboard');
-  el('compare-view').classList.toggle('d-none', v !== 'compare');
-  el('yoy-view').classList.toggle('d-none', v !== 'yoy');
-  compareBtn.classList.toggle('active', v === 'compare');
-  yoyBtn.classList.toggle('active', v === 'yoy');
-  if (v === 'compare') loadCompare();
-  if (v === 'yoy') { renderYoyControls(); loadYoy(); }
+  for (const name of ['dashboard', ...OVERLAYS.map(o => o.name)]) {
+    el(`${name}-view`).classList.toggle('d-none', name !== v);
+  }
+  for (const o of OVERLAYS) o.btn.classList.toggle('active', o.name === v);
+  OVERLAYS.find(o => o.name === v)?.show();
 }
 
 // Each overlay button toggles its own view, falling back to the dashboard.
-compareBtn.addEventListener('click', () => showView(currentView === 'compare' ? 'dashboard' : 'compare'));
-yoyBtn.addEventListener('click', () => showView(currentView === 'yoy' ? 'dashboard' : 'yoy'));
+for (const o of OVERLAYS) {
+  o.btn.addEventListener('click', () => showView(currentView === o.name ? 'dashboard' : o.name));
+}
+
+/**
+ * Load an overlay view's data, reporting progress and failure on that view's
+ * own status line rather than throwing. Both overlays spelled out the same
+ * announce / fetch / catch-into-the-status-line sequence.
+ */
+async function loadInto<T>(
+  statusId: string, url: string, loading: string, failure: string,
+): Promise<T | null> {
+  const status = el(statusId);
+  status.textContent = loading;
+  try {
+    const data = await fetchJson<T>(url);
+    status.textContent = '';
+    return data;
+  } catch (e) {
+    status.textContent = `${failure}: ${(e as Error).message}`;
+    return null;
+  }
+}
 
 async function loadCompare(): Promise<void> {
-  const status = el('cmp-status');
   if (!lastRows.length) {
-    status.textContent = 'No local data selected — pick a period on the dashboard first.';
+    el('cmp-status').textContent = 'No local data selected — pick a period on the dashboard first.';
     return;
   }
   const from = lastRows[0].date;
   const to = lastRows[lastRows.length - 1].date;
   el('cmp-range').textContent = `${from} → ${to}`;
-  status.textContent = 'Loading public data…';
 
-  let data: { location: string; source: string; mine: WeatherRow[]; public: PublicRow[] };
-  try {
-    data = await fetchJson(`/api/compare?from=${from}&to=${to}`);
-  } catch (e) {
-    status.textContent = `Could not fetch public data: ${(e as Error).message}`;
-    return;
-  }
-  status.textContent = '';
+  const data = await loadInto<{ mine: WeatherRow[]; public: PublicRow[] }>(
+    'cmp-status', `/api/compare?from=${from}&to=${to}`,
+    'Loading public data…', 'Could not fetch public data',
+  );
+  if (!data) return;
 
   // Align public rows to my dates so both series share the same x-axis.
   const pub = new Map<string, PublicRow>(data.public.map(p => [p.date, p]));
@@ -884,15 +904,8 @@ function yoyUrl(): string {
 
 async function loadYoy(): Promise<void> {
   const status = el('yoy-status');
-  status.textContent = 'Loading…';
-
-  let data: YoyResponse;
-  try {
-    data = await fetchJson<YoyResponse>(yoyUrl());
-  } catch (e) {
-    status.textContent = `Could not load: ${(e as Error).message}`;
-    return;
-  }
+  const data = await loadInto<YoyResponse>('yoy-status', yoyUrl(), 'Loading…', 'Could not load');
+  if (!data) return;
 
   el('yoy-heading').textContent = `${data.label} across years`;
   if (!data.years.length) {

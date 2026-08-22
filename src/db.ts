@@ -82,6 +82,12 @@ export function queryDay(date: string): WeatherRow | undefined {
   return one<WeatherRow>('SELECT * FROM weather WHERE date = ?', date);
 }
 
+/** One day as a row list — the row-list shape every other period query returns. */
+export function queryDayRows(date: string): WeatherRow[] {
+  const row = queryDay(date);
+  return row ? [row] : [];
+}
+
 export function queryRange(from: string, to: string): WeatherRow[] {
   return all<WeatherRow>(
     'SELECT * FROM weather WHERE date >= ? AND date <= ? ORDER BY date', from, to,

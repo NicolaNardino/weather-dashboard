@@ -2,7 +2,7 @@ import express, { Request, Response } from 'express';
 import path from 'path';
 import { DATA_FILE, describeImport, importFile } from './import';
 import {
-  queryDay, queryWeek, queryMonth, queryYear, queryRange,
+  queryDayRows, queryWeek, queryMonth, queryYear, queryRange,
   queryAllDates, queryYears, aggregateStats, getMeta, WeatherRow,
   queryPublicRange, upsertPublic, PublicRow
 } from './db';
@@ -80,12 +80,21 @@ function requireQuery<T extends string | number = string>(
   return vals;
 }
 
-/** The period routes all share a shape: check params, query rows, add stats. */
-function rowsRoute(names: string[], rows: (q: Record<string, string>) => WeatherRow[]) {
+/**
+ * The period routes all share a shape: check params, query rows, add stats.
+ * `emptyIs404` is the one variation — the single-day route answers 404 rather
+ * than an empty period, which used to mean spelling the whole shape out again.
+ */
+function rowsRoute(
+  names: string[],
+  rows: (q: Record<string, string>) => WeatherRow[],
+  opts: { emptyIs404?: boolean } = {},
+) {
   return (req: Request, res: Response) => {
     const q = requireQuery(req, res, names);
     if (!q) return;
     const found = rows(q);
+    if (opts.emptyIs404 && !found.length) return res.status(404).json({ error: 'no data' });
     res.json({ rows: found, stats: aggregateStats(found) });
   };
 }
@@ -107,10 +116,7 @@ const YOY_UNITS: Record<string, YoyUnit> = {
   day: {
     needs: ['month', 'day'],
     label: q => `${monthName(q.month)} ${q.day}`,
-    rows: q => y => {
-      const r = queryDay(`${y}-${pad2(q.month)}-${pad2(q.day)}`);
-      return r ? [r] : [];
-    },
+    rows: q => y => queryDayRows(`${y}-${pad2(q.month)}-${pad2(q.day)}`),
   },
   week: {
     needs: ['week'],
@@ -211,13 +217,7 @@ app.get('/api/across-years', (req, res) => {
 });
 
 // GET /api/day?date=YYYY-MM-DD — the one period route that can 404
-app.get('/api/day', (req, res) => {
-  const q = requireQuery(req, res, ['date']);
-  if (!q) return;
-  const row = queryDay(q.date);
-  if (!row) return res.status(404).json({ error: 'no data' });
-  res.json({ rows: [row], stats: aggregateStats([row]) });
-});
+app.get('/api/day', rowsRoute(['date'], q => queryDayRows(q.date), { emptyIs404: true }));
 
 // GET /api/week?year=2026&week=14
 app.get('/api/week', rowsRoute(['year', 'week'], q => queryWeek(+q.year, +q.week)));
