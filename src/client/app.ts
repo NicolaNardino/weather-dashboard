@@ -337,7 +337,7 @@ function isoWeek(d: Date): number {
  * other.
  */
 async function reloadDates(): Promise<void> {
-  allDates = (await fetchJson<{ date: string }[]>('/api/dates')).map(d => d.date);
+  allDates = await fetchJson<string[]>('/api/dates');
   renderControls();
   await load();
   await refreshStatus();
