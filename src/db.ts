@@ -78,13 +78,9 @@ export function getMeta(key: string): string | undefined {
 /** A row of the `weather` table: the id, the date, and one number per FIELD. */
 export type WeatherRow = { id: number; date: string } & Record<Field, number>;
 
-export function queryDay(date: string): WeatherRow | undefined {
-  return one<WeatherRow>('SELECT * FROM weather WHERE date = ?', date);
-}
-
 /** One day as a row list — the row-list shape every other period query returns. */
 export function queryDayRows(date: string): WeatherRow[] {
-  const row = queryDay(date);
+  const row = one<WeatherRow>('SELECT * FROM weather WHERE date = ?', date);
   return row ? [row] : [];
 }
 
@@ -124,8 +120,9 @@ export function queryAllRows(): WeatherRow[] {
   return all<WeatherRow>('SELECT * FROM weather');
 }
 
-export function queryAllDates(): { date: string }[] {
-  return all<{ date: string }>('SELECT date FROM weather ORDER BY date');
+/** Every stored date, ascending — the pool the front-end's pickers draw from. */
+export function queryAllDates(): string[] {
+  return all<{ date: string }>('SELECT date FROM weather ORDER BY date').map(r => r.date);
 }
 
 /** Distinct calendar years present in the data, ascending — drives the

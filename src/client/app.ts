@@ -56,10 +56,29 @@ function destroyChart(id: string): void {
   delete charts[id];
 }
 
+/**
+ * Chart options: `extra` over CHART_DEFAULTS, merged one level into each axis
+ * so a chart can pin a single scale (`{ scales: { y: { min: 0 } } }`) without
+ * restating the shared tick/grid styling — a plain spread dropped it, which the
+ * one chart that pins an axis had to work around by spelling the defaults back
+ * out twice.
+ */
+function chartOptions(extra: any): any {
+  const { scales, ...rest } = extra;
+  return {
+    ...CHART_DEFAULTS,
+    ...rest,
+    scales: {
+      x: { ...CHART_DEFAULTS.scales.x, ...scales?.x },
+      y: { ...CHART_DEFAULTS.scales.y, ...scales?.y },
+    },
+  };
+}
+
 function mkChart(id: string, type: string, data: any, extraOpts: any = {}): void {
   const ctx = document.getElementById(id);
   destroyChart(id);
-  charts[id] = new Chart(ctx, { type, data, options: { ...CHART_DEFAULTS, ...extraOpts } });
+  charts[id] = new Chart(ctx, { type, data, options: chartOptions(extraOpts) });
 }
 
 /** A line dataset with the shared styling; `extra` overrides any of it. */
@@ -93,6 +112,22 @@ const el = (id: string) => document.getElementById(id)!;
 
 /** Replace an element's markup. Every render function below ends in this. */
 const setHtml = (id: string, html: string): void => { el(id).innerHTML = html; };
+
+/**
+ * Fill a container with one chunk of markup per item — cards, table heads,
+ * table rows. Every render function below built the same `.map(…).join('')`
+ * around its own row template.
+ */
+function renderList<T>(id: string, items: readonly T[], row: (item: T) => string): void {
+  setHtml(id, items.map(row).join(''));
+}
+
+/** Empty a container and hand it back, ready to `append()` built nodes into. */
+function emptyEl(id: string): HTMLElement {
+  const node = el(id);
+  node.innerHTML = '';
+  return node;
+}
 
 /**
  * GET a JSON endpoint, turning a non-2xx into a throw that carries the server's
@@ -247,8 +282,7 @@ let lastRows: WeatherRow[] = [];   // rows from the most recent dashboard load (
 // offer a period the dashboard didn't implement, which the click handler had
 // to guard against.
 function renderPeriodTabs(): void {
-  const tabs = el('period-tabs');
-  tabs.innerHTML = '';
+  const tabs = emptyEl('period-tabs');
   for (const key of Object.keys(PERIODS) as Period[]) {
     const btn = mkEl('button', {
       type: 'button',
@@ -269,9 +303,7 @@ function renderPeriodTabs(): void {
 
 // --- Controls ---
 function renderControls(): void {
-  const controls = el('controls');
-  controls.innerHTML = '';
-  PERIODS[period].controls(controls, allDates);
+  PERIODS[period].controls(emptyEl('controls'), allDates);
 }
 
 function yearSelect(): HTMLSelectElement {
@@ -305,7 +337,7 @@ function isoWeek(d: Date): number {
  * other.
  */
 async function reloadDates(): Promise<void> {
-  allDates = (await fetchJson<{ date: string }[]>('/api/dates')).map(d => d.date);
+  allDates = await fetchJson<string[]>('/api/dates');
   renderControls();
   await load();
   await refreshStatus();
@@ -381,7 +413,7 @@ const STAT_CARDS: StatCard[] = [
 const statSpan = (prefix: string, key: string) => `<span id="s-${prefix}-${key}">—</span>`;
 
 function renderStatCards(): void {
-  setHtml('stat-cards', STAT_CARDS.map(c => `
+  renderList('stat-cards', STAT_CARDS, c => `
     <div class="col-6 col-md-4 col-xl-2">
       <div class="card bg-secondary-subtle border-0 h-100">
         <div class="card-body p-3">
@@ -392,7 +424,7 @@ function renderStatCards(): void {
             .join('')}</div>
         </div>
       </div>
-    </div>`).join(''));
+    </div>`);
 }
 
 function renderStats(s: Stats | undefined): void {
@@ -457,7 +489,7 @@ const CHART_META: ChartSpec[] = [
       line('Low',  rows.map(r => r.hum_low),  '#60a5fa', { backgroundColor: '#60a5fa11', fill: true }),
     ],
     // Humidity is a percentage, so pin the axis rather than letting it autoscale.
-    opts: { scales: { ...CHART_DEFAULTS.scales, y: { ...CHART_DEFAULTS.scales.y, min: 0, max: 100 } } },
+    opts: { scales: { y: { min: 0, max: 100 } } },
   },
   {
     key: 'pres', label: 'Pressure', unit: 'hPa', type: 'line', col: 'col-12 col-md-6 col-xl-4', height: 120,
@@ -503,8 +535,7 @@ function applyChartVisibility(): void {
 }
 
 function renderChartToggles(): void {
-  const toggles = el('chart-toggles');
-  toggles.innerHTML = '';
+  const toggles = emptyEl('chart-toggles');
   CHART_META.forEach(c => {
     const btn = mkEl('button', { type: 'button', className: 'btn btn-outline-secondary', textContent: c.label });
     const sync = () => {
@@ -543,14 +574,14 @@ function chartCard(o: {
 }
 
 function renderChartCards(): void {
-  setHtml('chart-cards', CHART_META.map(c =>
+  renderList('chart-cards', CHART_META, c =>
     chartCard({
       id: `chart-${c.key}`,
       title: `${c.label} (${c.unit})`,
       col: c.col,
       height: c.height,
       attr: ` data-chart="${c.key}"`,   // what applyChartVisibility() hides
-    })).join(''));
+    }));
 }
 
 // --- Charts ---
@@ -593,16 +624,16 @@ const TABLE_COLUMNS: TableColumn[] = [
 ];
 
 function renderTableHead(): void {
-  setHtml('table-head', TABLE_COLUMNS.map(c => `<th>${c.label}</th>`).join(''));
+  renderList('table-head', TABLE_COLUMNS, c => `<th>${c.label}</th>`);
 }
 
 function renderTable(rows: WeatherRow[]): void {
-  setHtml('table-body', rows.map(r =>
+  renderList('table-body', rows, r =>
     `<tr>${TABLE_COLUMNS.map(c => {
       const cls = typeof c.cls === 'function' ? c.cls(r) : (c.cls ?? '');
       return `<td class="${cls}">${c.cell(r)}</td>`;
     }).join('')}</tr>`
-  ).join(''));
+  );
 }
 
 function clearAll(): void {
@@ -658,8 +689,8 @@ const COMPARE_META: CompareSpec[] = [
 ];
 
 function renderCompareCards(): void {
-  setHtml('cmp-chart-cards', COMPARE_META.map(m =>
-    chartCard({ id: m.id, title: m.title, col: 'col-12 col-xl-6', height: 110 })).join(''));
+  renderList('cmp-chart-cards', COMPARE_META, m =>
+    chartCard({ id: m.id, title: m.title, col: 'col-12 col-xl-6', height: 110 }));
 }
 
 const MINE_COLOR = '#38bdf8';
@@ -770,13 +801,13 @@ function renderCompareSummary(
   };
   const fmt = (n: number | null) => (n == null ? '—' : n.toFixed(1));
 
-  setHtml('cmp-summary-body', COMPARE_META.map(({ row: name, key }) => {
+  renderList('cmp-summary-body', COMPARE_META, ({ row: name, key }) => {
     const mine = avg(mineOf(key));
     const theirs = avg(pubOf(key));
     const diff = (mine != null && theirs != null) ? mine - theirs : null;
     return `<tr><td>${name}</td><td>${fmt(mine)}</td><td>${fmt(theirs)}</td>${
       deltaCell(diff, n => n.toFixed(1))}</tr>`;
-  }).join(''));
+  });
 }
 
 // --- Across years (year-over-year) ---
@@ -876,14 +907,13 @@ const YOY_SUMMARY: { label: string; unit: string; get: (s: Stats) => number }[] 
 let yoyUnit: YoyUnit = 'month';
 
 function renderYoyCards(): void {
-  setHtml('yoy-chart-cards', YOY_METRICS.map(m =>
-    chartCard({ id: m.id, title: m.title, col: 'col-12 col-md-6 col-xl-4', height: 120 })).join(''));
+  renderList('yoy-chart-cards', YOY_METRICS, m =>
+    chartCard({ id: m.id, title: m.title, col: 'col-12 col-md-6 col-xl-4', height: 120 }));
 }
 
 /** Rebuild the unit selector and the value pickers it implies. */
 function renderYoyControls(): void {
-  const controls = el('yoy-controls');
-  controls.innerHTML = '';
+  const controls = emptyEl('yoy-controls');
 
   const unitSel = mkSelect(
     (Object.keys(YOY_UNITS) as YoyUnit[]).map(k => ({ value: k, label: YOY_UNITS[k].label })),
@@ -947,7 +977,7 @@ function renderYoySummary(data: YoyResponse): void {
   const hasDelta = data.years.length >= 2;
   setHtml('yoy-summary-head', `<th>Metric</th>${yearCols}${hasDelta ? '<th>Δ latest−earliest</th>' : ''}`);
 
-  setHtml('yoy-summary-body', YOY_SUMMARY.map(m => {
+  renderList('yoy-summary-body', YOY_SUMMARY, m => {
     const vals = data.years.map(y => m.get(y.stats));
     const suffix = m.unit ? ` ${m.unit}` : '';
     const cells = vals.map(v => `<td>${v}${suffix}</td>`).join('');
@@ -955,7 +985,7 @@ function renderYoySummary(data: YoyResponse): void {
       ? deltaCell(round(vals[vals.length - 1] - vals[0]), n => `${n}${suffix}`)
       : '';
     return `<tr><td>${m.label}</td>${cells}${delta}</tr>`;
-  }).join(''));
+  });
 }
 
 // --- Init ---
