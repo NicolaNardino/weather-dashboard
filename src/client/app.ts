@@ -194,6 +194,49 @@ const mutedLabel = (text: string) =>
   mkEl('span', { className: 'text-muted small', textContent: text });
 
 /**
+ * Fill a `btn-group` with one button per item and keep their pressed state in
+ * step with whatever `active` reads. Both button groups on the page — the
+ * period tabs and the chart toggles — built their buttons the same way and then
+ * re-stated the active class in their own way: the tabs by re-rendering the
+ * whole group on every click, the toggles through a per-button `sync` closure.
+ * Re-reading `active` for every button after a click covers both, so a group
+ * can't be left showing a stale selection.
+ */
+function renderButtonGroup<T>(
+  id: string,
+  items: readonly T[],
+  o: {
+    label: (item: T) => string;
+    active: (item: T) => boolean;
+    onClick: (item: T) => void;
+    /** Extra per-button setup, e.g. the `data-period` the harness clicks. */
+    each?: (item: T, btn: HTMLButtonElement) => void;
+  },
+): void {
+  const box = emptyEl(id);
+  const buttons = items.map(item => {
+    const btn = mkEl('button', {
+      type: 'button',
+      className: 'btn btn-outline-secondary',
+      textContent: o.label(item),
+    });
+    o.each?.(item, btn);
+    btn.addEventListener('click', () => { o.onClick(item); sync(); });
+    box.append(btn);
+    return { item, btn };
+  });
+
+  function sync(): void {
+    for (const { item, btn } of buttons) {
+      const on = o.active(item);
+      btn.classList.toggle('active', on);
+      btn.setAttribute('aria-pressed', String(on));
+    }
+  }
+  sync();
+}
+
+/**
  * One entry per period selector. `controls` populates the header with that
  * period's pickers; `url` turns whatever those pickers now hold into the API
  * call. Keeping the pair together means the `period` string is dispatched once
@@ -282,23 +325,17 @@ let lastRows: WeatherRow[] = [];   // rows from the most recent dashboard load (
 // offer a period the dashboard didn't implement, which the click handler had
 // to guard against.
 function renderPeriodTabs(): void {
-  const tabs = emptyEl('period-tabs');
-  for (const key of Object.keys(PERIODS) as Period[]) {
-    const btn = mkEl('button', {
-      type: 'button',
-      className: `btn btn-outline-secondary${key === period ? ' active' : ''}`,
-      textContent: PERIODS[key].label,
-    });
-    btn.dataset.period = key;   // the verification harness clicks these
-    btn.addEventListener('click', () => {
+  renderButtonGroup('period-tabs', Object.keys(PERIODS) as Period[], {
+    label: key => PERIODS[key].label,
+    active: key => key === period,
+    each: (key, btn) => { btn.dataset.period = key; },   // the harness clicks these
+    onClick: key => {
       period = key;
       showView('dashboard');    // period tabs belong to the dashboard
-      renderPeriodTabs();       // re-render to move the active class
       renderControls();
       load();
-    });
-    tabs.append(btn);
-  }
+    },
+  });
 }
 
 // --- Controls ---
@@ -346,14 +383,22 @@ async function reloadDates(): Promise<void> {
 // --- Load data ---
 async function load(): Promise<void> {
   const sels = Array.from(el('controls').querySelectorAll('select'));
-  const resp = await fetch(PERIODS[period].url(sels));
-  if (!resp.ok) { lastRows = []; clearAll(); return; }
-  const { rows, stats } = await resp.json() as { rows: WeatherRow[]; stats: Stats };
 
-  lastRows = rows;
-  renderStats(stats);
-  renderCharts(rows);
-  renderTable(rows);
+  let data: { rows: WeatherRow[]; stats: Stats };
+  try {
+    data = await fetchJson<{ rows: WeatherRow[]; stats: Stats }>(PERIODS[period].url(sels));
+  } catch {
+    // A period the server has no data for (the day route 404s) — blank the
+    // dashboard rather than leaving the previous period's rows on screen.
+    lastRows = [];
+    clearAll();
+    return;
+  }
+
+  lastRows = data.rows;
+  renderStats(data.stats);
+  renderCharts(data.rows);
+  renderTable(data.rows);
 }
 
 // --- Data freshness (last import time) ---
@@ -535,21 +580,14 @@ function applyChartVisibility(): void {
 }
 
 function renderChartToggles(): void {
-  const toggles = emptyEl('chart-toggles');
-  CHART_META.forEach(c => {
-    const btn = mkEl('button', { type: 'button', className: 'btn btn-outline-secondary', textContent: c.label });
-    const sync = () => {
-      btn.classList.toggle('active', chartVisibility[c.key]);
-      btn.setAttribute('aria-pressed', String(chartVisibility[c.key]));
-    };
-    sync();
-    btn.addEventListener('click', () => {
+  renderButtonGroup('chart-toggles', CHART_META, {
+    label: c => c.label,
+    active: c => chartVisibility[c.key],
+    onClick: c => {
       chartVisibility[c.key] = !chartVisibility[c.key];
-      sync();
       writeStore('chartVisibility', chartVisibility);
       applyChartVisibility();
-    });
-    toggles.append(btn);
+    },
   });
 }
 
