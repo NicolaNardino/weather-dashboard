@@ -84,14 +84,19 @@ function requireQuery<T extends string | number = string>(
  * The period routes all share a shape: check params, query rows, add stats.
  * `emptyIs404` is the one variation — the single-day route answers 404 rather
  * than an empty period, which used to mean spelling the whole shape out again.
+ *
+ * `read` is passed straight to `requireQuery`, so a route whose params are
+ * period indexes says `read: Number` once and its handler receives numbers —
+ * rather than each one re-converting with `+q.year` and a non-numeric value
+ * slipping through as NaN.
  */
-function rowsRoute(
+function rowsRoute<T extends string | number = string>(
   names: string[],
-  rows: (q: Record<string, string>) => WeatherRow[],
-  opts: { emptyIs404?: boolean } = {},
+  rows: (q: Record<string, T>) => WeatherRow[],
+  opts: { emptyIs404?: boolean; read?: (v: string | undefined) => T } = {},
 ) {
   return (req: Request, res: Response) => {
-    const q = requireQuery(req, res, names);
+    const q = requireQuery<T>(req, res, names, opts.read);
     if (!q) return;
     const found = rows(q);
     if (opts.emptyIs404 && !found.length) return res.status(404).json({ error: 'no data' });
@@ -220,13 +225,16 @@ app.get('/api/across-years', (req, res) => {
 app.get('/api/day', rowsRoute(['date'], q => queryDayRows(q.date), { emptyIs404: true }));
 
 // GET /api/week?year=2026&week=14
-app.get('/api/week', rowsRoute(['year', 'week'], q => queryWeek(+q.year, +q.week)));
+app.get('/api/week', rowsRoute(['year', 'week'], q => queryWeek(q.year, q.week), { read: Number }));
 
 // GET /api/month?year=2026&month=4
-app.get('/api/month', rowsRoute(['year', 'month'], q => queryMonth(+q.year, +q.month)));
+app.get(
+  '/api/month',
+  rowsRoute(['year', 'month'], q => queryMonth(q.year, q.month), { read: Number }),
+);
 
 // GET /api/year?year=2026
-app.get('/api/year', rowsRoute(['year'], q => queryYear(+q.year)));
+app.get('/api/year', rowsRoute(['year'], q => queryYear(q.year), { read: Number }));
 
 // GET /api/range?from=YYYY-MM-DD&to=YYYY-MM-DD
 app.get('/api/range', rowsRoute(['from', 'to'], q => queryRange(q.from, q.to)));
