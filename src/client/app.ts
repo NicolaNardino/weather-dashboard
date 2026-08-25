@@ -505,49 +505,51 @@ interface ChartSpec {
   col: string;
   /** Canvas height attribute — Chart.js uses it as the aspect-ratio hint. */
   height: number;
-  datasets: (rows: WeatherRow[]) => any[];
+  /** One entry per plotted series: which measure it reads, and how it looks. */
+  series: { label: string; field: Measure; color: string; extra?: any }[];
   /** Chart-specific option overrides merged over CHART_DEFAULTS. */
   opts?: any;
 }
 
+/** A stored measure a dashboard series can plot. */
+type Measure = Exclude<keyof WeatherRow, 'date'>;
+
 const CHART_META: ChartSpec[] = [
   {
     key: 'temp', label: 'Temperature', unit: '°C', type: 'line', col: 'col-12 col-xl-8', height: 110,
-    datasets: rows => [
-      line('High', rows.map(r => r.temp_high), '#f87272'),
-      line('Avg',  rows.map(r => r.temp_avg),  '#facc15'),
-      line('Low',  rows.map(r => r.temp_low),  '#60a5fa'),
-      line('Dew',  rows.map(r => r.dew_avg),   '#4ade80', { borderDash: [4, 3] }),
+    series: [
+      { label: 'High', field: 'temp_high', color: '#f87272' },
+      { label: 'Avg',  field: 'temp_avg',  color: '#facc15' },
+      { label: 'Low',  field: 'temp_low',  color: '#60a5fa' },
+      { label: 'Dew',  field: 'dew_avg',   color: '#4ade80', extra: { borderDash: [4, 3] } },
     ],
   },
   {
     key: 'precip', label: 'Precipitation', unit: 'mm', type: 'bar', col: 'col-12 col-xl-4', height: 110,
-    datasets: rows => [
-      { label: 'Precip', data: rows.map(r => r.precip), backgroundColor: '#60a5fa99' },
-    ],
+    series: [{ label: 'Precip', field: 'precip', color: '#60a5fa' }],
   },
   {
     key: 'hum', label: 'Humidity', unit: '%', type: 'line', col: 'col-12 col-md-6 col-xl-4', height: 120,
-    datasets: rows => [
-      line('High', rows.map(r => r.hum_high), '#f87272', { backgroundColor: '#f8727211', fill: true }),
-      line('Avg',  rows.map(r => r.hum_avg),  '#facc15'),
-      line('Low',  rows.map(r => r.hum_low),  '#60a5fa', { backgroundColor: '#60a5fa11', fill: true }),
+    series: [
+      { label: 'High', field: 'hum_high', color: '#f87272', extra: { backgroundColor: '#f8727211', fill: true } },
+      { label: 'Avg',  field: 'hum_avg',  color: '#facc15' },
+      { label: 'Low',  field: 'hum_low',  color: '#60a5fa', extra: { backgroundColor: '#60a5fa11', fill: true } },
     ],
     // Humidity is a percentage, so pin the axis rather than letting it autoscale.
     opts: { scales: { y: { min: 0, max: 100 } } },
   },
   {
     key: 'pres', label: 'Pressure', unit: 'hPa', type: 'line', col: 'col-12 col-md-6 col-xl-4', height: 120,
-    datasets: rows => [
-      line('High', rows.map(r => r.pres_high), '#a78bfa'),
-      line('Low',  rows.map(r => r.pres_low),  '#818cf8', { backgroundColor: '#818cf811', fill: true }),
+    series: [
+      { label: 'High', field: 'pres_high', color: '#a78bfa' },
+      { label: 'Low',  field: 'pres_low',  color: '#818cf8', extra: { backgroundColor: '#818cf811', fill: true } },
     ],
   },
   {
     key: 'wind', label: 'Wind', unit: 'km/h', type: 'line', col: 'col-12 col-md-6 col-xl-4', height: 120,
-    datasets: rows => [
-      line('High', rows.map(r => r.wind_high), '#fb923c', { backgroundColor: '#fb923c11', fill: true }),
-      line('Avg',  rows.map(r => r.wind_avg),  '#fdba74'),
+    series: [
+      { label: 'High', field: 'wind_high', color: '#fb923c', extra: { backgroundColor: '#fb923c11', fill: true } },
+      { label: 'Avg',  field: 'wind_avg',  color: '#fdba74' },
     ],
   },
 ];
@@ -596,12 +598,15 @@ function renderChartToggles(): void {
  * and the Compare view both used to spell this out per chart in index.html —
  * nine near-identical ten-line blocks whose canvas ids had to match the two
  * metadata lists here by hand.
+ *
+ * `chartKey` tags the column with the `data-chart` attribute
+ * `applyChartVisibility()` hides it by; only the dashboard's cards carry one.
  */
 function chartCard(o: {
-  id: string; title: string; col: string; height: number; attr?: string;
+  id: string; title: string; col: string; height: number; chartKey?: string;
 }): string {
   return `
-    <div class="${o.col}"${o.attr ?? ''}>
+    <div class="${o.col}"${o.chartKey ? ` data-chart="${o.chartKey}"` : ''}>
       <div class="card bg-secondary-subtle border-0">
         <div class="card-body">
           <h6 class="card-title text-muted">${o.title}</h6>
@@ -618,7 +623,7 @@ function renderChartCards(): void {
       title: `${c.label} (${c.unit})`,
       col: c.col,
       height: c.height,
-      attr: ` data-chart="${c.key}"`,   // what applyChartVisibility() hides
+      chartKey: c.key,
     }));
 }
 
@@ -630,7 +635,9 @@ function labels(rows: WeatherRow[]): string[] {
 function renderCharts(rows: WeatherRow[]): void {
   const lbl = labels(rows);
   for (const c of CHART_META) {
-    mkChart(`chart-${c.key}`, c.type, { labels: lbl, datasets: c.datasets(rows) }, c.opts);
+    const datasets = c.series.map(s =>
+      series(c.type, s.label, rows.map(r => r[s.field]), s.color, s.extra));
+    mkChart(`chart-${c.key}`, c.type, { labels: lbl, datasets }, c.opts);
   }
   applyChartVisibility();
 }
