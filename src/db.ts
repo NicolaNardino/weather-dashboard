@@ -23,6 +23,19 @@ export type Field = (typeof FIELDS)[number];
 /** Every column of the `weather` table, in insert order. */
 export const COLUMNS = ['date', ...FIELDS];
 
+/**
+ * The measures the public weather service supplies — the subset of FIELDS the
+ * Compare view can line my data up against. Like FIELDS, this is the single
+ * source of truth: it builds the `public_weather` cache table, types
+ * `PublicRow`, and drives both its SELECT and its INSERT.
+ */
+export const PUBLIC_FIELDS = ['temp_high', 'temp_low', 'wind_high', 'precip'] as const;
+
+export type PublicField = (typeof PUBLIC_FIELDS)[number];
+
+/** A cached public-service day: the date, and one nullable number per field. */
+export type PublicRow = { date: string } & Record<PublicField, number | null>;
+
 let _db: DatabaseSync | null = null;
 
 export function getDb(): DatabaseSync {
@@ -49,7 +62,7 @@ export function getDb(): DatabaseSync {
       CREATE TABLE IF NOT EXISTS public_weather (
         location   TEXT NOT NULL,
         date       TEXT NOT NULL,
-        temp_high  REAL, temp_low REAL, wind_high REAL, precip REAL,
+        ${PUBLIC_FIELDS.map(f => `${f} REAL`).join(', ')},
         fetched_at TEXT,
         PRIMARY KEY (location, date)
       )
@@ -80,8 +93,7 @@ export type WeatherRow = { id: number; date: string } & Record<Field, number>;
 
 /** One day as a row list — the row-list shape every other period query returns. */
 export function queryDayRows(date: string): WeatherRow[] {
-  const row = one<WeatherRow>('SELECT * FROM weather WHERE date = ?', date);
-  return row ? [row] : [];
+  return all<WeatherRow>('SELECT * FROM weather WHERE date = ?', date);
 }
 
 export function queryRange(from: string, to: string): WeatherRow[] {
@@ -135,17 +147,9 @@ export function queryYears(): number[] {
 
 // --- Public weather service cache (Open-Meteo) ---
 
-export interface PublicRow {
-  date: string;
-  temp_high: number | null;
-  temp_low: number | null;
-  wind_high: number | null;
-  precip: number | null;
-}
-
 export function queryPublicRange(location: string, from: string, to: string): PublicRow[] {
   return all<PublicRow>(
-    `SELECT date, temp_high, temp_low, wind_high, precip
+    `SELECT date, ${PUBLIC_FIELDS.join(', ')}
        FROM public_weather
       WHERE location = ? AND date >= ? AND date <= ?
       ORDER BY date`,
@@ -154,15 +158,14 @@ export function queryPublicRange(location: string, from: string, to: string): Pu
 }
 
 export function upsertPublic(location: string, rows: PublicRow[]): void {
-  const db = getDb();
-  const stmt = db.prepare(
-    `INSERT OR REPLACE INTO public_weather
-       (location, date, temp_high, temp_low, wind_high, precip, fetched_at)
-     VALUES (?,?,?,?,?,?,?)`
+  const columns = ['location', 'date', ...PUBLIC_FIELDS, 'fetched_at'];
+  const stmt = getDb().prepare(
+    `INSERT OR REPLACE INTO public_weather (${columns.join(', ')})
+     VALUES (${columns.map(() => '?').join(',')})`,
   );
   const now = new Date().toISOString();
   for (const r of rows) {
-    stmt.run(location, r.date, r.temp_high, r.temp_low, r.wind_high, r.precip, now);
+    stmt.run(location, r.date, ...PUBLIC_FIELDS.map(f => r[f]), now);
   }
 }
 

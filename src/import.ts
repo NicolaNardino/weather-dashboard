@@ -2,8 +2,9 @@ import fs from 'fs';
 import path from 'path';
 import { COLUMNS, Field, FIELDS, getDb, queryAllRows, setMeta } from './db';
 
+/** Strip units/thousands separators, keeping only what parseFloat reads. */
 function parseNum(s: string): number {
-  return parseFloat(s.replace(/,/g, '').replace(/[^\d.-]/g, ''));
+  return parseFloat(s.replace(/[^\d.-]/g, ''));
 }
 
 function parseDate(s: string): string | null {
