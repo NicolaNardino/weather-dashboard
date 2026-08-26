@@ -4,7 +4,7 @@ import { DATA_FILE, describeImport, importFile } from './import';
 import {
   queryDayRows, queryWeek, queryMonth, queryYear, queryRange,
   queryAllDates, queryYears, aggregateStats, getMeta, WeatherRow,
-  queryPublicRange, upsertPublic, PublicRow
+  queryPublicRange, upsertPublic, PublicRow, PublicField, PUBLIC_FIELDS
 } from './db';
 
 // Baar, Canton Zug, Switzerland — reference location for the public comparison.
@@ -29,11 +29,23 @@ function eachDate(from: string, to: string): string[] {
   return out;
 }
 
+/**
+ * The Open-Meteo daily series behind each cached field. Naming the pair once
+ * means the request's `daily=` list and the response's parallel arrays are read
+ * from the same table, rather than two hand-kept lists of the same four series.
+ */
+const OPEN_METEO_DAILY: Record<PublicField, string> = {
+  temp_high: 'temperature_2m_max',
+  temp_low: 'temperature_2m_min',
+  wind_high: 'wind_speed_10m_max',
+  precip: 'precipitation_sum',
+};
+
 // Fetch daily data for Baar from Open-Meteo, normalized to PublicRow[].
 async function fetchOpenMeteo(from: string, to: string): Promise<PublicRow[]> {
   const url =
     `https://api.open-meteo.com/v1/forecast?latitude=${BAAR.lat}&longitude=${BAAR.lon}` +
-    `&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,wind_speed_10m_max` +
+    `&daily=${Object.values(OPEN_METEO_DAILY).join(',')}` +
     `&timezone=Europe%2FZurich&start_date=${from}&end_date=${to}`;
 
   const r = await fetch(url);
@@ -45,16 +57,12 @@ async function fetchOpenMeteo(from: string, to: string): Promise<PublicRow[]> {
   // Open-Meteo returns each measure as its own parallel array; a measure the
   // API omitted is missing rather than null, so every read needs the same
   // cast-and-default.
-  const at = (measure: string, i: number): number | null =>
-    (d[measure] as number[] | undefined)?.[i] ?? null;
-
   return time.map((date, i) => ({
     date,
-    temp_high: at('temperature_2m_max', i),
-    temp_low: at('temperature_2m_min', i),
-    wind_high: at('wind_speed_10m_max', i),
-    precip: at('precipitation_sum', i),
-  }));
+    ...Object.fromEntries(PUBLIC_FIELDS.map(f =>
+      [f, (d[OPEN_METEO_DAILY[f]] as number[] | undefined)?.[i] ?? null],
+    )),
+  })) as PublicRow[];
 }
 
 /**
@@ -175,16 +183,13 @@ app.get('/api/compare', async (req, res) => {
     });
 
   const today = new Date().toISOString().slice(0, 10);
-  const wanted = eachDate(from, to);
   const cached = queryPublicRange(BAAR.label, from, to);
   const cachedDates = new Set(cached.map(r => r.date));
 
   // Today/future are forecasts that keep changing — never trust the cache for
   // them. Past days are stable, so a cache hit means we can skip the network.
-  const hasVolatile = wanted.some(d => d >= today);
-  const missing = wanted.filter(d => d < today && !cachedDates.has(d));
-
-  if (!missing.length && !hasVolatile) return reply(cached, { cached: true });
+  const needsFetch = eachDate(from, to).some(d => d >= today || !cachedDates.has(d));
+  if (!needsFetch) return reply(cached, { cached: true });
 
   try {
     const fetched = await fetchOpenMeteo(from, to);

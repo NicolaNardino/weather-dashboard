@@ -189,6 +189,20 @@ const MONTH_OPTIONS = numberOptions(12, n => MONTH_NAMES[n - 1]);
 const WEEK_OPTIONS = numberOptions(53, n => `Week ${n}`);
 const DAY_OPTIONS = numberOptions(31);
 
+/**
+ * Those pickers, each pre-selected to the reference date's own week / month /
+ * day. The dashboard's period list and the year-over-year one both offer the
+ * same three and differ only in what a change reloads — so each spelled the
+ * same default out again, and a picker could end up defaulting to the reference
+ * date in one view but not the other.
+ */
+const weekSelect = (onChange: () => void) =>
+  mkSelect(WEEK_OPTIONS, String(isoWeek(refDate())), onChange);
+const monthSelect = (onChange: () => void) =>
+  mkSelect(MONTH_OPTIONS, String(refDate().getMonth() + 1), onChange);
+const daySelect = (onChange: () => void) =>
+  mkSelect(DAY_OPTIONS, String(refDate().getDate()), onChange);
+
 /** A small dimmed caption sitting next to a picker. */
 const mutedLabel = (text: string) =>
   mkEl('span', { className: 'text-muted small', textContent: text });
@@ -259,19 +273,19 @@ const PERIODS = {
 
   week: {
     label: 'Week',
-    controls: el => el.append(yearSelect(), mkSelect(WEEK_OPTIONS, String(isoWeek(refDate())), load)),
+    controls: el => el.append(yearSelect(load), weekSelect(load)),
     url: s => `/api/week?year=${s[0]?.value}&week=${s[1]?.value}`,
   },
 
   month: {
     label: 'Month',
-    controls: el => el.append(yearSelect(), mkSelect(MONTH_OPTIONS, String(refDate().getMonth() + 1), load)),
+    controls: el => el.append(yearSelect(load), monthSelect(load)),
     url: s => `/api/month?year=${s[0]?.value}&month=${s[1]?.value}`,
   },
 
   year: {
     label: 'Year',
-    controls: el => el.append(yearSelect()),
+    controls: el => el.append(yearSelect(load)),
     url: s => `/api/year?year=${s[0]?.value}`,
   },
 
@@ -343,13 +357,13 @@ function renderControls(): void {
   PERIODS[period].controls(emptyEl('controls'), allDates);
 }
 
-function yearSelect(): HTMLSelectElement {
+function yearSelect(onChange: () => void): HTMLSelectElement {
   const thisYear = String(new Date().getFullYear());
   const years = [...new Set(allDates.map(d => d.slice(0, 4)))];
   return mkSelect(
     asOptions(years.length ? years : [thisYear]),
     years[years.length - 1] || thisYear,
-    load,
+    onChange,
   );
 }
 
@@ -884,10 +898,7 @@ interface YoyUnitSpec {
 const YOY_UNITS = {
   day: {
     label: 'Day',
-    controls: el => el.append(
-      mkSelect(MONTH_OPTIONS, String(refDate().getMonth() + 1), loadYoy),
-      mkSelect(DAY_OPTIONS, String(refDate().getDate()), loadYoy),
-    ),
+    controls: el => el.append(monthSelect(loadYoy), daySelect(loadYoy)),
     query: v => `unit=day&month=${v[0]}&day=${v[1]}`,
     pos: () => 1,                                        // a single slot
     axis: label => ({ positions: [1], labels: [label] }),
@@ -895,7 +906,7 @@ const YOY_UNITS = {
 
   week: {
     label: 'Week',
-    controls: el => el.append(mkSelect(WEEK_OPTIONS, String(isoWeek(refDate())), loadYoy)),
+    controls: el => el.append(weekSelect(loadYoy)),
     query: v => `unit=week&week=${v[0]}`,
     pos: r => localDate(r.date).getDay() || 7,           // Mon=1..Sun=7
     axis: () => ({
@@ -906,7 +917,7 @@ const YOY_UNITS = {
 
   month: {
     label: 'Month',
-    controls: el => el.append(mkSelect(MONTH_OPTIONS, String(refDate().getMonth() + 1), loadYoy)),
+    controls: el => el.append(monthSelect(loadYoy)),
     query: v => `unit=month&month=${v[0]}`,
     pos: r => Number(r.date.slice(8, 10)),               // day of month, 1..31
     axis: () => {
