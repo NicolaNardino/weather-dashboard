@@ -79,9 +79,23 @@ const all = <T>(sql: string, ...params: Param[]): T[] =>
 const one = <T>(sql: string, ...params: Param[]): T | undefined =>
   getDb().prepare(sql).get(...params) as unknown as T | undefined;
 
+/**
+ * An `INSERT OR REPLACE` over the named columns — the only write shape this app
+ * has. Every table is keyed on its natural key (date, or location+date), so
+ * re-running an import or a fetch replaces rather than duplicates. The three
+ * writers each built this SQL themselves, spelling out the same `join(', ')` /
+ * one-`?`-per-column pair.
+ */
+export function upsertStmt(table: string, columns: readonly string[]) {
+  return getDb().prepare(
+    `INSERT OR REPLACE INTO ${table} (${columns.join(', ')})
+     VALUES (${columns.map(() => '?').join(',')})`,
+  );
+}
+
 // Small key/value store for app metadata (e.g. last import timestamp).
 export function setMeta(key: string, value: string): void {
-  getDb().prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run(key, value);
+  upsertStmt('meta', ['key', 'value']).run(key, value);
 }
 
 export function getMeta(key: string): string | undefined {
@@ -91,16 +105,14 @@ export function getMeta(key: string): string | undefined {
 /** A row of the `weather` table: the id, the date, and one number per FIELD. */
 export type WeatherRow = { id: number; date: string } & Record<Field, number>;
 
-/** One day as a row list — the row-list shape every other period query returns. */
-export function queryDayRows(date: string): WeatherRow[] {
-  return all<WeatherRow>('SELECT * FROM weather WHERE date = ?', date);
-}
-
 export function queryRange(from: string, to: string): WeatherRow[] {
   return all<WeatherRow>(
     'SELECT * FROM weather WHERE date >= ? AND date <= ? ORDER BY date', from, to,
   );
 }
+
+/** One day as a row list — the row-list shape every other period query returns. */
+export const queryDayRows = (date: string): WeatherRow[] => queryRange(date, date);
 
 export function queryMonth(year: number, month: number): WeatherRow[] {
   const m = String(month).padStart(2, '0');
@@ -158,11 +170,7 @@ export function queryPublicRange(location: string, from: string, to: string): Pu
 }
 
 export function upsertPublic(location: string, rows: PublicRow[]): void {
-  const columns = ['location', 'date', ...PUBLIC_FIELDS, 'fetched_at'];
-  const stmt = getDb().prepare(
-    `INSERT OR REPLACE INTO public_weather (${columns.join(', ')})
-     VALUES (${columns.map(() => '?').join(',')})`,
-  );
+  const stmt = upsertStmt('public_weather', ['location', 'date', ...PUBLIC_FIELDS, 'fetched_at']);
   const now = new Date().toISOString();
   for (const r of rows) {
     stmt.run(location, r.date, ...PUBLIC_FIELDS.map(f => r[f]), now);

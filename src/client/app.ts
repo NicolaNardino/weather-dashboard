@@ -81,30 +81,26 @@ function mkChart(id: string, type: string, data: any, extraOpts: any = {}): void
   charts[id] = new Chart(ctx, { type, data, options: chartOptions(extraOpts) });
 }
 
-/** A line dataset with the shared styling; `extra` overrides any of it. */
-function line(label: string, data: (number | string | null)[], color: string, extra: any = {}): any {
-  return {
-    label,
-    data,
-    borderColor: color,
-    backgroundColor: 'transparent',
-    pointRadius: 2,
-    tension: 0.3,
-    ...extra,
-  };
-}
-
 /**
  * One dataset in a chart that can be drawn either way: a translucent bar, or a
- * styled line. Both overlay views pick between the two forms per metric, and
- * both spelled the same ternary out.
+ * line with the shared styling (which `extra` overrides). Every chart on the
+ * page picks between the two forms per metric, and each spelled the same
+ * ternary out.
  */
 function series(
   type: string, label: string, data: (number | null)[], color: string, extra: any = {},
 ): any {
   return type === 'bar'
     ? { label, data, backgroundColor: `${color}99` }
-    : line(label, data, color, extra);
+    : {
+        label,
+        data,
+        borderColor: color,
+        backgroundColor: 'transparent',
+        pointRadius: 2,
+        tension: 0.3,
+        ...extra,
+      };
 }
 
 /** `getElementById`, asserted — every id below is one this page owns. */
