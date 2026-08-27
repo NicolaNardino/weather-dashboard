@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { COLUMNS, Field, FIELDS, getDb, queryAllRows, setMeta } from './db';
+import { COLUMNS, Field, FIELDS, queryAllRows, setMeta, upsertStmt } from './db';
 
 /** Strip units/thousands separators, keeping only what parseFloat reads. */
 function parseNum(s: string): number {
@@ -21,11 +21,7 @@ export interface ImportResult {
 }
 
 export function importFile(filePath: string): ImportResult {
-  const db = getDb();
-  const insert = db.prepare(
-    `INSERT OR REPLACE INTO weather (${COLUMNS.join(', ')})
-     VALUES (${COLUMNS.map(() => '?').join(',')})`,
-  );
+  const insert = upsertStmt('weather', COLUMNS);
 
   // Snapshot existing rows up front so we can tell new/changed from unchanged.
   const existing = new Map<string, Record<Field, number>>(
