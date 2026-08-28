@@ -34,18 +34,9 @@
   <!-- Chart cards — rendered from CHART_META in app.ts. -->
   <div class="row g-3 mb-3" id="chart-cards"></div>
 
-  <!-- Data table -->
-  <div class="card bg-secondary-subtle border-0 mb-3">
-    <div class="card-body p-0">
-      <div class="table-responsive">
-        <table class="table table-dark table-sm table-hover mb-0 small" id="data-table">
-          <!-- Header cells are rendered from TABLE_COLUMNS in app.ts. -->
-          <thead><tr id="table-head"></tr></thead>
-          <tbody id="table-body"></tbody>
-        </table>
-      </div>
-    </div>
-  </div>
+  <!-- Data table — the well is rendered by renderTableCard, its header cells
+       from TABLE_COLUMNS, both in app.ts. -->
+  <div id="data-table"></div>
 
 </div>
 
@@ -62,18 +53,7 @@
   <div class="row g-3 mb-3" id="cmp-chart-cards"></div>
 
   <!-- Difference summary -->
-  <div class="card bg-secondary-subtle border-0 mb-3">
-    <div class="card-body p-0">
-      <div class="table-responsive">
-        <table class="table table-dark table-sm mb-0 small" id="cmp-summary">
-          <thead>
-            <tr><th>Metric</th><th>My avg</th><th>Baar avg</th><th>Difference</th></tr>
-          </thead>
-          <tbody id="cmp-summary-body"></tbody>
-        </table>
-      </div>
-    </div>
-  </div>
+  <div id="cmp-summary"></div>
 </div>
 
 <!-- Across-years view (hidden until toggled) — same period compared across years -->
@@ -88,16 +68,7 @@
   <div class="row g-3 mb-3" id="yoy-chart-cards"></div>
 
   <!-- Per-year averages, one column per year -->
-  <div class="card bg-secondary-subtle border-0 mb-3">
-    <div class="card-body p-0">
-      <div class="table-responsive">
-        <table class="table table-dark table-sm mb-0 small" id="yoy-summary">
-          <thead><tr id="yoy-summary-head"></tr></thead>
-          <tbody id="yoy-summary-body"></tbody>
-        </table>
-      </div>
-    </div>
-  </div>
+  <div id="yoy-summary"></div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
