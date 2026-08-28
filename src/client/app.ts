@@ -82,6 +82,23 @@ function mkChart(id: string, type: string, data: any, extraOpts: any = {}): void
 }
 
 /**
+ * Draw one chart per spec onto a shared x-axis. All three views — the
+ * dashboard, Compare and Across Years — walk their own metadata list, and each
+ * spelled out the same `mkChart(id, spec.type, { labels, datasets })` call;
+ * they differ only in how a spec names its canvas and becomes datasets.
+ */
+function drawCharts<T extends { type: string; opts?: any }>(
+  specs: readonly T[],
+  labels: string[],
+  id: (spec: T) => string,
+  datasets: (spec: T) => any[],
+): void {
+  for (const spec of specs) {
+    mkChart(id(spec), spec.type, { labels, datasets: datasets(spec) }, spec.opts);
+  }
+}
+
+/**
  * One dataset in a chart that can be drawn either way: a translucent bar, or a
  * line with the shared styling (which `extra` overrides). Every chart on the
  * page picks between the two forms per metric, and each spelled the same
@@ -123,6 +140,40 @@ function emptyEl(id: string): HTMLElement {
   const node = el(id);
   node.innerHTML = '';
   return node;
+}
+
+/**
+ * Table markup. Every table on the page — the dashboard's data table and the
+ * two comparison summaries — built its own `<td class="…">` / `<th>` / `<tr>`
+ * strings, so the class attribute was spelled out even when empty in one place
+ * and omitted in another. One cell builder covers all six sites.
+ */
+const cell = (tag: 'td' | 'th', content: string | number, cls = ''): string =>
+  `<${tag}${cls ? ` class="${cls}"` : ''}>${content}</${tag}>`;
+const td = (content: string | number, cls = '') => cell('td', content, cls);
+const th = (content: string | number, cls = '') => cell('th', content, cls);
+const tr = (cells: string[]) => `<tr>${cells.join('')}</tr>`;
+
+/**
+ * A table sitting in a card well: `<thead><tr id="…-head">` over
+ * `<tbody id="…-body">`, both filled in later. All three tables spelled the
+ * same five-element nesting out in index.html, differing only in their ids and
+ * one class — and each carried an id on the `<table>` itself that nothing read.
+ */
+function renderTableCard(id: string, hover = false): void {
+  setHtml(
+    id,
+    `<div class="card bg-secondary-subtle border-0 mb-3">
+       <div class="card-body p-0">
+         <div class="table-responsive">
+           <table class="table table-dark table-sm${hover ? ' table-hover' : ''} mb-0 small">
+             <thead><tr id="${id}-head"></tr></thead>
+             <tbody id="${id}-body"></tbody>
+           </table>
+         </div>
+       </div>
+     </div>`,
+  );
 }
 
 /**
@@ -643,12 +694,8 @@ function labels(rows: WeatherRow[]): string[] {
 }
 
 function renderCharts(rows: WeatherRow[]): void {
-  const lbl = labels(rows);
-  for (const c of CHART_META) {
-    const datasets = c.series.map(s =>
-      series(c.type, s.label, rows.map(r => r[s.field]), s.color, s.extra));
-    mkChart(`chart-${c.key}`, c.type, { labels: lbl, datasets }, c.opts);
-  }
+  drawCharts(CHART_META, labels(rows), c => `chart-${c.key}`, c =>
+    c.series.map(s => series(c.type, s.label, rows.map(r => r[s.field]), s.color, s.extra)));
   applyChartVisibility();
 }
 
@@ -679,21 +726,18 @@ const TABLE_COLUMNS: TableColumn[] = [
 ];
 
 function renderTableHead(): void {
-  renderList('table-head', TABLE_COLUMNS, c => `<th>${c.label}</th>`);
+  renderList('data-table-head', TABLE_COLUMNS, c => th(c.label));
 }
 
 function renderTable(rows: WeatherRow[]): void {
-  renderList('table-body', rows, r =>
-    `<tr>${TABLE_COLUMNS.map(c => {
-      const cls = typeof c.cls === 'function' ? c.cls(r) : (c.cls ?? '');
-      return `<td class="${cls}">${c.cell(r)}</td>`;
-    }).join('')}</tr>`
+  renderList('data-table-body', rows, r =>
+    tr(TABLE_COLUMNS.map(c => td(c.cell(r), typeof c.cls === 'function' ? c.cls(r) : c.cls))),
   );
 }
 
 function clearAll(): void {
   CHART_META.forEach(({ key }) => destroyChart(`chart-${key}`));
-  setHtml('table-body', '');
+  setHtml('data-table-body', '');
 }
 
 // --- Import button ---
@@ -757,9 +801,8 @@ const PUBLIC_COLOR = '#fb923c';
  * year-over-year) render their delta column this way.
  */
 function deltaCell(diff: number | null, fmt: (n: number) => string): string {
-  if (diff == null) return '<td>—</td>';
-  const cls = diff > 0 ? 'text-danger' : diff < 0 ? 'text-info' : '';
-  return `<td class="${cls}">${diff > 0 ? '+' : ''}${fmt(diff)}</td>`;
+  if (diff == null) return td('—');
+  return td(`${diff > 0 ? '+' : ''}${fmt(diff)}`, diff > 0 ? 'text-danger' : diff < 0 ? 'text-info' : '');
 }
 
 // The page has three mutually-exclusive views, each `<name>-view` in the markup:
@@ -827,21 +870,17 @@ async function loadCompare(): Promise<void> {
 
   // Align public rows to my dates so both series share the same x-axis.
   const pub = new Map<string, PublicRow>(data.public.map(p => [p.date, p]));
-  const lbl = labels(lastRows);
   const mineOf = (key: SharedKey) => lastRows.map(r => r[key] as number);
   const pubOf  = (key: SharedKey) => lastRows.map(r => (pub.get(r.date)?.[key] ?? null) as number | null);
 
-  for (const m of COMPARE_META) {
+  drawCharts(COMPARE_META, labels(lastRows), m => m.id, m => {
     // Lines name their measure ("Me · High"); the bar chart has only one.
     const suffix = m.series ? ` · ${m.series}` : '';
-    mkChart(m.id, m.type, {
-      labels: lbl,
-      datasets: [
-        series(m.type, `Me${suffix}`, mineOf(m.key), MINE_COLOR),
-        series(m.type, `Baar${suffix}`, pubOf(m.key), PUBLIC_COLOR, { borderDash: [5, 3] }),
-      ],
-    });
-  }
+    return [
+      series(m.type, `Me${suffix}`, mineOf(m.key), MINE_COLOR),
+      series(m.type, `Baar${suffix}`, pubOf(m.key), PUBLIC_COLOR, { borderDash: [5, 3] }),
+    ];
+  });
 
   renderCompareSummary(mineOf, pubOf);
 }
@@ -860,8 +899,7 @@ function renderCompareSummary(
     const mine = avg(mineOf(key));
     const theirs = avg(pubOf(key));
     const diff = (mine != null && theirs != null) ? mine - theirs : null;
-    return `<tr><td>${name}</td><td>${fmt(mine)}</td><td>${fmt(theirs)}</td>${
-      deltaCell(diff, n => n.toFixed(1))}</tr>`;
+    return tr([td(name), td(fmt(mine)), td(fmt(theirs)), deltaCell(diff, n => n.toFixed(1))]);
   });
 }
 
@@ -1007,36 +1045,36 @@ async function loadYoy(): Promise<void> {
   // year's value (or null where a year is missing that day).
   const byPos = data.years.map(yb => new Map(yb.rows.map(row => [spec.pos(row), row])));
 
-  for (const metric of YOY_METRICS) {
-    const datasets = data.years.map((yb, i) =>
+  drawCharts(YOY_METRICS, xlabels, m => m.id, metric =>
+    data.years.map((yb, i) =>
       series(
         metric.type,
         String(yb.year),
         positions.map(p => { const row = byPos[i].get(p); return row ? metric.get(row) : null; }),
         yearColor(i),
-      ));
-    mkChart(metric.id, metric.type, { labels: xlabels, datasets });
-  }
+      )));
 
   renderYoySummary(data);
 }
 
 function renderYoySummary(data: YoyResponse): void {
   const round = (v: number) => Math.round(v * 10) / 10;
-  const yearCols = data.years.map(y => `<th>${y.year}</th>`).join('');
   // With ≥2 years, a trailing column shows the change from the earliest to the
   // latest year — the headline "how did this period differ" number.
   const hasDelta = data.years.length >= 2;
-  setHtml('yoy-summary-head', `<th>Metric</th>${yearCols}${hasDelta ? '<th>Δ latest−earliest</th>' : ''}`);
+  setHtml(
+    'yoy-summary-head',
+    [th('Metric'), ...data.years.map(y => th(y.year)), ...(hasDelta ? [th('Δ latest−earliest')] : [])]
+      .join(''),
+  );
 
   renderList('yoy-summary-body', YOY_SUMMARY, m => {
     const vals = data.years.map(y => m.get(y.stats));
     const suffix = m.unit ? ` ${m.unit}` : '';
-    const cells = vals.map(v => `<td>${v}${suffix}</td>`).join('');
     const delta = hasDelta
-      ? deltaCell(round(vals[vals.length - 1] - vals[0]), n => `${n}${suffix}`)
-      : '';
-    return `<tr><td>${m.label}</td>${cells}${delta}</tr>`;
+      ? [deltaCell(round(vals[vals.length - 1] - vals[0]), n => `${n}${suffix}`)]
+      : [];
+    return tr([td(m.label), ...vals.map(v => td(`${v}${suffix}`)), ...delta]);
   });
 }
 
@@ -1047,7 +1085,13 @@ function renderYoySummary(data: YoyResponse): void {
   renderChartCards();
   renderCompareCards();
   renderYoyCards();
+  renderTableCard('data-table', true);
+  renderTableCard('cmp-summary');
+  renderTableCard('yoy-summary');
   renderTableHead();
+  // The compare summary's columns are fixed; the other two heads are rendered
+  // from their own metadata when their data arrives.
+  renderList('cmp-summary-head', ['Metric', 'My avg', 'Baar avg', 'Difference'], c => th(c));
   renderChartToggles();
   applyChartVisibility();   // apply persisted hidden state immediately, even before charts render
   await reloadDates();
