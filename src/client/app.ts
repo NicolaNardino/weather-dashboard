@@ -516,6 +516,15 @@ const STAT_CARDS: StatCard[] = [
     headline: 'avg', sub: HIGH_LOW },
 ];
 
+/** A card's stat, with its unit appended — a count (see `bare`) carries none. */
+const statText = (card: StatCard, key: string, value: number | string): string =>
+  card.bare?.includes(key) ? String(value) : `${value} ${card.unit}`;
+
+/** The card a stats group belongs to, by prefix — how a metric finds its unit. */
+const CARD_BY_PREFIX: Record<string, StatCard> = Object.fromEntries(
+  STAT_CARDS.map(c => [c.prefix, c]),
+);
+
 const statSpan = (prefix: string, key: string) => `<span id="s-${prefix}-${key}">—</span>`;
 
 function renderStatCards(): void {
@@ -538,7 +547,7 @@ function renderStats(s: Stats | undefined): void {
   for (const c of STAT_CARDS) {
     for (const [key, value] of Object.entries(c.pick(s))) {
       // A group can carry keys no card shows (precip.max); setText ignores those.
-      setText(`s-${c.prefix}-${key}`, c.bare?.includes(key) ? value : `${value} ${c.unit}`);
+      setText(`s-${c.prefix}-${key}`, statText(c, key, value));
     }
   }
 }
@@ -981,16 +990,20 @@ const YOY_METRICS: YoyMetric[] = [
   { id: 'yoy-precip',    title: 'Precipitation (mm)', type: 'bar',  get: r => r.precip },
 ];
 
-// The averages table, one row per stat, reading the server's aggregated stats.
-const YOY_SUMMARY: { label: string; unit: string; get: (s: Stats) => number }[] = [
-  { label: 'Temp avg',     unit: '°C',   get: s => s.temp.avg },
-  { label: 'Temp high',    unit: '°C',   get: s => s.temp.high },
-  { label: 'Temp low',     unit: '°C',   get: s => s.temp.low },
-  { label: 'Humidity avg', unit: '%',    get: s => s.humidity.avg },
-  { label: 'Wind max',     unit: 'km/h', get: s => s.wind.high },
-  { label: 'Pressure avg', unit: 'hPa',  get: s => s.pressure.avg },
-  { label: 'Precip total', unit: 'mm',   get: s => s.precip.total },
-  { label: 'Rainy days',   unit: '',     get: s => s.precip.rainy_days },
+// The averages table, one row per stat. A row names the stat card it reads —
+// `prefix` picks the group out of the server's aggregated stats, `key` the value
+// within it — so the accessor and the unit both come from STAT_CARDS. Spelling
+// them out again here meant eight units and eight accessors that had to stay in
+// step with the cards showing the very same numbers.
+const YOY_SUMMARY: { label: string; prefix: string; key: string }[] = [
+  { label: 'Temp avg',     prefix: 'temp',   key: 'avg' },
+  { label: 'Temp high',    prefix: 'temp',   key: 'high' },
+  { label: 'Temp low',     prefix: 'temp',   key: 'low' },
+  { label: 'Humidity avg', prefix: 'hum',    key: 'avg' },
+  { label: 'Wind max',     prefix: 'wind',   key: 'high' },
+  { label: 'Pressure avg', prefix: 'pres',   key: 'avg' },
+  { label: 'Precip total', prefix: 'precip', key: 'total' },
+  { label: 'Rainy days',   prefix: 'precip', key: 'rainy_days' },
 ];
 
 // The current comparison unit; its value pickers are rebuilt when it changes.
@@ -1069,12 +1082,13 @@ function renderYoySummary(data: YoyResponse): void {
   );
 
   renderList('yoy-summary-body', YOY_SUMMARY, m => {
-    const vals = data.years.map(y => m.get(y.stats));
-    const suffix = m.unit ? ` ${m.unit}` : '';
+    const card = CARD_BY_PREFIX[m.prefix];
+    const text = (v: number) => statText(card, m.key, v);
+    const vals = data.years.map(y => card.pick(y.stats)[m.key]);
     const delta = hasDelta
-      ? [deltaCell(round(vals[vals.length - 1] - vals[0]), n => `${n}${suffix}`)]
+      ? [deltaCell(round(vals[vals.length - 1] - vals[0]), text)]
       : [];
-    return tr([td(m.label), ...vals.map(v => td(`${v}${suffix}`)), ...delta]);
+    return tr([td(m.label), ...vals.map(v => td(text(v))), ...delta]);
   });
 }
 
