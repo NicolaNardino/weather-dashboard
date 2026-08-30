@@ -552,9 +552,12 @@ function renderStats(s: Stats | undefined): void {
   }
 }
 
+/** Like `el`, but tolerates a missing element — a stats group can carry keys no
+    card renders, so those ids simply aren't on the page. (Named `node` rather
+    than `el`, which shadowed the asserting helper of that name above.) */
 function setText(id: string, val: string | number): void {
-  const el = document.getElementById(id);
-  if (el) el.textContent = String(val);
+  const node = document.getElementById(id);
+  if (node) node.textContent = String(val);
 }
 
 // --- The dashboard charts ---
@@ -641,13 +644,21 @@ function loadChartVisibility(): Record<string, boolean> {
 
 let chartVisibility: Record<string, boolean> = loadChartVisibility();
 
+/**
+ * A dashboard chart's canvas id. COMPARE_META and YOY_METRICS each name their
+ * canvas outright; only these are derived from the key — and four places (the
+ * card, the draw, the visibility resize and the teardown) each spelled the same
+ * template out, so the id lived nowhere.
+ */
+const chartId = (key: string) => `chart-${key}`;
+
 function applyChartVisibility(): void {
   CHART_META.forEach(c => {
     const visible = chartVisibility[c.key];
     document.querySelector<HTMLElement>(`[data-chart="${c.key}"]`)?.classList.toggle('d-none', !visible);
     // A chart that just became visible was sized to a hidden (0-width) canvas;
     // nudge Chart.js to re-measure now that the column has real dimensions.
-    if (visible) charts[`chart-${c.key}`]?.resize();
+    if (visible) charts[chartId(c.key)]?.resize();
   });
 }
 
@@ -689,7 +700,7 @@ function chartCard(o: {
 function renderChartCards(): void {
   renderList('chart-cards', CHART_META, c =>
     chartCard({
-      id: `chart-${c.key}`,
+      id: chartId(c.key),
       title: `${c.label} (${c.unit})`,
       col: c.col,
       height: c.height,
@@ -703,7 +714,7 @@ function labels(rows: WeatherRow[]): string[] {
 }
 
 function renderCharts(rows: WeatherRow[]): void {
-  drawCharts(CHART_META, labels(rows), c => `chart-${c.key}`, c =>
+  drawCharts(CHART_META, labels(rows), c => chartId(c.key), c =>
     c.series.map(s => series(c.type, s.label, rows.map(r => r[s.field]), s.color, s.extra)));
   applyChartVisibility();
 }
@@ -745,7 +756,7 @@ function renderTable(rows: WeatherRow[]): void {
 }
 
 function clearAll(): void {
-  CHART_META.forEach(({ key }) => destroyChart(`chart-${key}`));
+  CHART_META.forEach(({ key }) => destroyChart(chartId(key)));
   setHtml('data-table-body', '');
 }
 
@@ -830,11 +841,16 @@ let currentView: ViewName = 'dashboard';
 
 function showView(v: ViewName): void {
   currentView = v;
-  for (const name of ['dashboard', ...OVERLAYS.map(o => o.name)]) {
-    el(`${name}-view`).classList.toggle('d-none', name !== v);
+  el('dashboard-view').classList.toggle('d-none', v !== 'dashboard');
+  // One pass per overlay: hide or show its view, sync its button, and load it
+  // if it is the one being shown. These were three separate walks of OVERLAYS —
+  // one of them over a throwaway array rebuilt on every switch.
+  for (const o of OVERLAYS) {
+    const on = o.name === v;
+    el(`${o.name}-view`).classList.toggle('d-none', !on);
+    o.btn.classList.toggle('active', on);
+    if (on) o.show();
   }
-  for (const o of OVERLAYS) o.btn.classList.toggle('active', o.name === v);
-  OVERLAYS.find(o => o.name === v)?.show();
 }
 
 // Each overlay button toggles its own view, falling back to the dashboard.
