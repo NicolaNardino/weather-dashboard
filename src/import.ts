@@ -37,7 +37,9 @@ export function importFile(filePath: string): ImportResult {
 
     const date = parseDate(cols[0]);
     if (!date) continue;
-    if (cols.length < 16) continue;
+    // A short row is a header/footer line, not data. The width comes from
+    // COLUMNS rather than a literal 16, which had to agree with FIELDS by hand.
+    if (cols.length < COLUMNS.length) continue;
 
     // cols[0] is the date; the remaining 15 line up with FIELDS.
     const values = FIELDS.map((_, i) => parseNum(cols[i + 1]));

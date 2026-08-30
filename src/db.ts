@@ -114,11 +114,11 @@ export function queryRange(from: string, to: string): WeatherRow[] {
 /** One day as a row list — the row-list shape every other period query returns. */
 export const queryDayRows = (date: string): WeatherRow[] => queryRange(date, date);
 
+/** One calendar month. Day 31 is a safe upper bound — the dates are compared as
+    strings, so a shorter month simply has no rows past its own last day. */
 export function queryMonth(year: number, month: number): WeatherRow[] {
   const m = String(month).padStart(2, '0');
-  const from = `${year}-${m}-01`;
-  const to   = `${year}-${m}-31`;
-  return queryRange(from, to);
+  return queryRange(`${year}-${m}-01`, `${year}-${m}-31`);
 }
 
 export function queryYear(year: number): WeatherRow[] {
