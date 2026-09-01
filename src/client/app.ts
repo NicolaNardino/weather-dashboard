@@ -155,6 +155,18 @@ const th = (content: string | number, cls = '') => cell('th', content, cls);
 const tr = (cells: string[]) => `<tr>${cells.join('')}</tr>`;
 
 /**
+ * The Bootstrap card well every panel on the page sits in: a
+ * `bg-secondary-subtle` card wrapping a card body. The three builders below —
+ * the stat cards, the chart cards and the table cards — each spelled the same
+ * two class-laden divs out, differing only in a modifier on each, so the shared
+ * classes lived nowhere and one of the three could drift.
+ */
+const cardWell = (o: { body: string; cls?: string; bodyCls?: string }): string =>
+  `<div class="card bg-secondary-subtle border-0${o.cls ? ` ${o.cls}` : ''}">
+     <div class="card-body${o.bodyCls ? ` ${o.bodyCls}` : ''}">${o.body}</div>
+   </div>`;
+
+/**
  * A table sitting in a card well: `<thead><tr id="…-head">` over
  * `<tbody id="…-body">`, both filled in later. All three tables spelled the
  * same five-element nesting out in index.html, differing only in their ids and
@@ -163,16 +175,16 @@ const tr = (cells: string[]) => `<tr>${cells.join('')}</tr>`;
 function renderTableCard(id: string, hover = false): void {
   setHtml(
     id,
-    `<div class="card bg-secondary-subtle border-0 mb-3">
-       <div class="card-body p-0">
-         <div class="table-responsive">
+    cardWell({
+      cls: 'mb-3',
+      bodyCls: 'p-0',
+      body: `<div class="table-responsive">
            <table class="table table-dark table-sm${hover ? ' table-hover' : ''} mb-0 small">
              <thead><tr id="${id}-head"></tr></thead>
              <tbody id="${id}-body"></tbody>
            </table>
-         </div>
-       </div>
-     </div>`,
+         </div>`,
+    }),
   );
 }
 
@@ -525,20 +537,28 @@ const CARD_BY_PREFIX: Record<string, StatCard> = Object.fromEntries(
   STAT_CARDS.map(c => [c.prefix, c]),
 );
 
-const statSpan = (prefix: string, key: string) => `<span id="s-${prefix}-${key}">—</span>`;
+/**
+ * Where one stat's value is written. `renderStatCards` puts this id on the
+ * element and `renderStats` finds it again by the same name, so the template
+ * has to agree across the two — it was spelled out three times (the headline,
+ * the sub-line spans, and the lookup) with nothing tying them together.
+ */
+const statId = (prefix: string, key: string) => `s-${prefix}-${key}`;
+
+const statSpan = (prefix: string, key: string) => `<span id="${statId(prefix, key)}">—</span>`;
 
 function renderStatCards(): void {
   renderList('stat-cards', STAT_CARDS, c => `
     <div class="col-6 col-md-4 col-xl-2">
-      <div class="card bg-secondary-subtle border-0 h-100">
-        <div class="card-body p-3">
-          <div class="text-muted small">${c.title}</div>
-          <div class="fs-4 fw-bold" id="s-${c.prefix}-${c.headline}">—</div>
+      ${cardWell({
+        cls: 'h-100',
+        bodyCls: 'p-3',
+        body: `<div class="text-muted small">${c.title}</div>
+          <div class="fs-4 fw-bold" id="${statId(c.prefix, c.headline)}">—</div>
           <div class="small text-muted">${c.sub
             .map(p => `${p.before ?? ''}${statSpan(c.prefix, p.key)}${p.after ?? ''}`)
-            .join('')}</div>
-        </div>
-      </div>
+            .join('')}</div>`,
+      })}
     </div>`);
 }
 
@@ -547,7 +567,7 @@ function renderStats(s: Stats | undefined): void {
   for (const c of STAT_CARDS) {
     for (const [key, value] of Object.entries(c.pick(s))) {
       // A group can carry keys no card shows (precip.max); setText ignores those.
-      setText(`s-${c.prefix}-${key}`, statText(c, key, value));
+      setText(statId(c.prefix, key), statText(c, key, value));
     }
   }
 }
@@ -688,12 +708,10 @@ function chartCard(o: {
 }): string {
   return `
     <div class="${o.col}"${o.chartKey ? ` data-chart="${o.chartKey}"` : ''}>
-      <div class="card bg-secondary-subtle border-0">
-        <div class="card-body">
-          <h6 class="card-title text-muted">${o.title}</h6>
-          <canvas id="${o.id}" height="${o.height}"></canvas>
-        </div>
-      </div>
+      ${cardWell({
+        body: `<h6 class="card-title text-muted">${o.title}</h6>
+          <canvas id="${o.id}" height="${o.height}"></canvas>`,
+      })}
     </div>`;
 }
 
