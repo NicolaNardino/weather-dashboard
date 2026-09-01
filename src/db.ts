@@ -1,5 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import path from 'path';
+import { isoDay, ymd } from './dates';
 
 const DB_PATH = path.join(process.cwd(), 'weather.db');
 
@@ -117,26 +118,23 @@ export const queryDayRows = (date: string): WeatherRow[] => queryRange(date, dat
 /** One calendar month. Day 31 is a safe upper bound — the dates are compared as
     strings, so a shorter month simply has no rows past its own last day. */
 export function queryMonth(year: number, month: number): WeatherRow[] {
-  const m = String(month).padStart(2, '0');
-  return queryRange(`${year}-${m}-01`, `${year}-${m}-31`);
+  return queryRange(ymd(year, month, 1), ymd(year, month, 31));
 }
 
 export function queryYear(year: number): WeatherRow[] {
-  return queryRange(`${year}-01-01`, `${year}-12-31`);
+  return queryRange(ymd(year, 1, 1), ymd(year, 12, 31));
 }
 
 export function queryWeek(year: number, week: number): WeatherRow[] {
   // ISO week: walk back from Jan 4 (always in week 1) to that week's Monday.
-  // All UTC: the dates are formatted with toISOString, so building them in
-  // local time shifted them a day either side of midnight west/east of UTC.
+  // Built in UTC to match `isoDay`, which reads the date back out that way.
   const jan4 = new Date(Date.UTC(year, 0, 4));
   const monday = new Date(jan4);
   monday.setUTCDate(jan4.getUTCDate() - ((jan4.getUTCDay() || 7) - 1) + (week - 1) * 7);
   const sunday = new Date(monday);
   sunday.setUTCDate(monday.getUTCDate() + 6);
 
-  const isoDate = (d: Date) => d.toISOString().slice(0, 10);
-  return queryRange(isoDate(monday), isoDate(sunday));
+  return queryRange(isoDay(monday), isoDay(sunday));
 }
 
 /** Every stored row. Only the import needs this — it diffs against what's there. */
