@@ -1,5 +1,6 @@
 import express, { Request, Response } from 'express';
 import path from 'path';
+import { isoDay, ymd } from './dates';
 import { DATA_FILE, describeImport, importFile } from './import';
 import {
   queryDayRows, queryWeek, queryMonth, queryYear, queryRange,
@@ -15,15 +16,13 @@ const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct'
 /** "Mar" for 3, falling back to the bare number for anything out of range. */
 const monthName = (m: number) => MONTH_NAMES[m - 1] ?? `Month ${m}`;
 
-const pad2 = (n: number) => String(n).padStart(2, '0');
-
 // Every calendar day (YYYY-MM-DD) in [from, to] inclusive.
 function eachDate(from: string, to: string): string[] {
   const out: string[] = [];
   const d = new Date(`${from}T00:00:00Z`);
   const end = new Date(`${to}T00:00:00Z`);
   while (d <= end) {
-    out.push(d.toISOString().slice(0, 10));
+    out.push(isoDay(d));
     d.setUTCDate(d.getUTCDate() + 1);
   }
   return out;
@@ -129,7 +128,7 @@ const YOY_UNITS: Record<string, YoyUnit> = {
   day: {
     needs: ['month', 'day'],
     label: q => `${monthName(q.month)} ${q.day}`,
-    rows: q => y => queryDayRows(`${y}-${pad2(q.month)}-${pad2(q.day)}`),
+    rows: q => y => queryDayRows(ymd(y, q.month, q.day)),
   },
   week: {
     needs: ['week'],
@@ -182,7 +181,7 @@ app.get('/api/compare', async (req, res) => {
       public: pub,
     });
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = isoDay(new Date());
   const cached = queryPublicRange(BAAR.label, from, to);
   const cachedDates = new Set(cached.map(r => r.date));
 
