@@ -163,6 +163,16 @@ const th = (content: string | number, cls = '') => cell('th', content, cls);
 const tr = (cells: string[]) => `<tr>${cells.join('')}</tr>`;
 
 /**
+ * Fill a table's `<thead><tr>` with one `<th>` per label. All three tables set
+ * their header a different way — one through `renderList` with a wrapper
+ * lambda, one by joining a hand-built array into `setHtml`, and the data
+ * table's through its column list — so the same row was written three ways and
+ * the year-over-year one had to remember the `.join('')` itself.
+ */
+const renderHeadRow = (id: string, labels: readonly (string | number)[]): void =>
+  renderList(id, labels, l => th(l));
+
+/**
  * The Bootstrap card well every panel on the page sits in: a
  * `bg-secondary-subtle` card wrapping a card body. The three builders below —
  * the stat cards, the chart cards and the table cards — each spelled the same
@@ -772,7 +782,7 @@ const TABLE_COLUMNS: TableColumn[] = [
 ];
 
 function renderTableHead(): void {
-  renderList('data-table-head', TABLE_COLUMNS, c => th(c.label));
+  renderHeadRow('data-table-head', TABLE_COLUMNS.map(c => c.label));
 }
 
 function renderTable(rows: WeatherRow[]): void {
@@ -1117,11 +1127,11 @@ function renderYoySummary(data: YoyResponse): void {
   // With ≥2 years, a trailing column shows the change from the earliest to the
   // latest year — the headline "how did this period differ" number.
   const hasDelta = data.years.length >= 2;
-  setHtml(
-    'yoy-summary-head',
-    [th('Metric'), ...data.years.map(y => th(y.year)), ...(hasDelta ? [th('Δ latest−earliest')] : [])]
-      .join(''),
-  );
+  renderHeadRow('yoy-summary-head', [
+    'Metric',
+    ...data.years.map(y => y.year),
+    ...(hasDelta ? ['Δ latest−earliest'] : []),
+  ]);
 
   renderList('yoy-summary-body', YOY_SUMMARY, m => {
     const card = CARD_BY_PREFIX[m.prefix];
@@ -1147,7 +1157,7 @@ function renderYoySummary(data: YoyResponse): void {
   renderTableHead();
   // The compare summary's columns are fixed; the other two heads are rendered
   // from their own metadata when their data arrives.
-  renderList('cmp-summary-head', ['Metric', 'My avg', 'Baar avg', 'Difference'], c => th(c));
+  renderHeadRow('cmp-summary-head', ['Metric', 'My avg', 'Baar avg', 'Difference']);
   renderChartToggles();
   applyChartVisibility();   // apply persisted hidden state immediately, even before charts render
   await reloadDates();
