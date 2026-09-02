@@ -120,6 +120,14 @@ function series(
       };
 }
 
+/**
+ * The last element of a list — the newest date, the latest year, the most
+ * recent row. Seven call sites each spelled out the same `xs[xs.length - 1]`
+ * index arithmetic, which reads as a bounds calculation rather than as the one
+ * thing it ever means here.
+ */
+const last = <T>(xs: readonly T[]): T | undefined => xs[xs.length - 1];
+
 /** `getElementById`, asserted — every id below is one this page owns. */
 const el = (id: string) => document.getElementById(id)!;
 
@@ -326,7 +334,7 @@ interface PeriodSpec {
 const PERIODS = {
   day: {
     label: 'Day',
-    controls: (el, dates) => el.append(mkSelect(asOptions(dates), dates[dates.length - 1], load)),
+    controls: (el, dates) => el.append(mkSelect(asOptions(dates), last(dates), load)),
     url: s => `/api/day?date=${s[0]?.value ?? ''}`,
   },
 
@@ -355,7 +363,7 @@ const PERIODS = {
     // From defaults to the last ~30 available days for a sensible window.
     controls: (el, dates) => {
       const fromSel = mkSelect(asOptions(dates), dates[Math.max(0, dates.length - 30)], load);
-      const toSel = mkSelect(asOptions(dates), dates[dates.length - 1], load);
+      const toSel = mkSelect(asOptions(dates), last(dates), load);
 
       // "All" checkbox — when checked, span the entire dataset and disable the
       // From/To pickers since the window is no longer user-controlled.
@@ -376,7 +384,7 @@ const PERIODS = {
     url: s => {
       const all = (document.getElementById('range-all') as HTMLInputElement | null)?.checked;
       let [from, to] = all && allDates.length
-        ? [allDates[0], allDates[allDates.length - 1]]   // whole dataset
+        ? [allDates[0], last(allDates)]                  // whole dataset
         : [s[0]?.value, s[1]?.value];
       if (from && to && from > to) [from, to] = [to, from]; // tolerate reversed picks
       return `/api/range?from=${from}&to=${to}`;
@@ -421,7 +429,7 @@ function yearSelect(onChange: () => void): HTMLSelectElement {
   const years = [...new Set(allDates.map(d => d.slice(0, 4)))];
   return mkSelect(
     asOptions(years.length ? years : [thisYear]),
-    years[years.length - 1] || thisYear,
+    last(years) || thisYear,
     onChange,
   );
 }
@@ -430,7 +438,7 @@ function yearSelect(onChange: () => void): HTMLSelectElement {
 // when no data is loaded). Selectors default to this period so a fresh load
 // lands on populated data rather than the empty calendar-current period.
 function refDate(): Date {
-  const latest = allDates[allDates.length - 1];
+  const latest = last(allDates);
   return latest ? localDate(latest) : new Date();
 }
 
@@ -902,7 +910,7 @@ async function loadCompare(): Promise<void> {
     return;
   }
   const from = lastRows[0].date;
-  const to = lastRows[lastRows.length - 1].date;
+  const to = last(lastRows)!.date;
   el('cmp-range').textContent = `${from} → ${to}`;
 
   const data = await loadInto<{ mine: WeatherRow[]; public: PublicRow[] }>(
@@ -1120,7 +1128,7 @@ function renderYoySummary(data: YoyResponse): void {
     const text = (v: number) => statText(card, m.key, v);
     const vals = data.years.map(y => card.pick(y.stats)[m.key]);
     const delta = hasDelta
-      ? [deltaCell(round(vals[vals.length - 1] - vals[0]), text)]
+      ? [deltaCell(round(last(vals)! - vals[0]), text)]
       : [];
     return tr([td(m.label), ...vals.map(v => td(text(v))), ...delta]);
   });
