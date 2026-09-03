@@ -227,6 +227,19 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   return await r.json() as T;
 }
 
+/**
+ * An `/api/…` URL with its query string. Seven call sites each built their own
+ * by interpolating values straight into a `?a=${…}&b=${…}` template, so none of
+ * them encoded anything and the parameter names sat in string literals.
+ */
+type Params = Record<string, string | number | undefined>;
+
+const api = (path: string, params: Params): string =>
+  `/api/${path}?` +
+  Object.entries(params)
+    .map(([k, v]) => `${k}=${encodeURIComponent(v ?? '')}`)
+    .join('&');
+
 /** "2026-04-07" → that day as a local Date (the pickers all work in local time). */
 function localDate(iso: string): Date {
   const [y, m, d] = iso.split('-').map(Number);
@@ -355,25 +368,25 @@ const PERIODS = {
   day: {
     label: 'Day',
     controls: (el, dates) => el.append(mkSelect(asOptions(dates), last(dates), load)),
-    url: s => `/api/day?date=${s[0]?.value ?? ''}`,
+    url: s => api('day', { date: s[0]?.value }),
   },
 
   week: {
     label: 'Week',
     controls: el => el.append(yearSelect(load), weekSelect(load)),
-    url: s => `/api/week?year=${s[0]?.value}&week=${s[1]?.value}`,
+    url: s => api('week', { year: s[0]?.value, week: s[1]?.value }),
   },
 
   month: {
     label: 'Month',
     controls: el => el.append(yearSelect(load), monthSelect(load)),
-    url: s => `/api/month?year=${s[0]?.value}&month=${s[1]?.value}`,
+    url: s => api('month', { year: s[0]?.value, month: s[1]?.value }),
   },
 
   year: {
     label: 'Year',
     controls: el => el.append(yearSelect(load)),
-    url: s => `/api/year?year=${s[0]?.value}`,
+    url: s => api('year', { year: s[0]?.value }),
   },
 
   range: {
@@ -407,7 +420,7 @@ const PERIODS = {
         ? [allDates[0], last(allDates)]                  // whole dataset
         : [s[0]?.value, s[1]?.value];
       if (from && to && from > to) [from, to] = [to, from]; // tolerate reversed picks
-      return `/api/range?from=${from}&to=${to}`;
+      return api('range', { from, to });
     },
   },
 } satisfies Record<string, PeriodSpec>;
@@ -930,7 +943,7 @@ async function loadCompare(): Promise<void> {
   el('cmp-range').textContent = `${from} → ${to}`;
 
   const data = await loadInto<{ mine: WeatherRow[]; public: PublicRow[] }>(
-    'cmp-status', `/api/compare?from=${from}&to=${to}`,
+    'cmp-status', api('compare', { from, to }),
     'Loading public data…', 'Could not fetch public data',
   );
   if (!data) return;
@@ -993,8 +1006,9 @@ interface YoyUnitSpec {
   label: string;
   /** Appends this unit's value pickers after the unit selector. */
   controls: (el: HTMLElement) => void;
-  /** Those pickers' values → the /api/across-years query string. */
-  query: (vals: string[]) => string;
+  /** Those pickers' values → this unit's /api/across-years params. The `unit`
+      param itself comes from the entry's own key, so it isn't restated here. */
+  query: (vals: string[]) => Params;
   /** The row's slot inside its period, so the same slot lines up across years. */
   pos: (r: WeatherRow) => number;
   /** The shared x-axis for this unit: slot positions and their labels. */
@@ -1005,7 +1019,7 @@ const YOY_UNITS = {
   day: {
     label: 'Day',
     controls: el => el.append(monthSelect(loadYoy), daySelect(loadYoy)),
-    query: v => `unit=day&month=${v[0]}&day=${v[1]}`,
+    query: v => ({ month: v[0], day: v[1] }),
     pos: () => 1,                                        // a single slot
     axis: label => ({ positions: [1], labels: [label] }),
   },
@@ -1013,7 +1027,7 @@ const YOY_UNITS = {
   week: {
     label: 'Week',
     controls: el => el.append(weekSelect(loadYoy)),
-    query: v => `unit=week&week=${v[0]}`,
+    query: v => ({ week: v[0] }),
     pos: r => localDate(r.date).getDay() || 7,           // Mon=1..Sun=7
     axis: () => ({
       positions: [1, 2, 3, 4, 5, 6, 7],
@@ -1024,7 +1038,7 @@ const YOY_UNITS = {
   month: {
     label: 'Month',
     controls: el => el.append(monthSelect(loadYoy)),
-    query: v => `unit=month&month=${v[0]}`,
+    query: v => ({ month: v[0] }),
     pos: r => Number(r.date.slice(8, 10)),               // day of month, 1..31
     axis: () => {
       const positions = Array.from({ length: 31 }, (_, i) => i + 1);
@@ -1095,7 +1109,7 @@ function yoyUrl(): string {
   const vals = Array.from(el('yoy-controls').querySelectorAll('select'))
     .slice(1)                                   // [0] is the unit selector
     .map(s => s.value);
-  return `/api/across-years?${YOY_UNITS[yoyUnit].query(vals)}`;
+  return api('across-years', { unit: yoyUnit, ...YOY_UNITS[yoyUnit].query(vals) });
 }
 
 async function loadYoy(): Promise<void> {
