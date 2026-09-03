@@ -163,14 +163,24 @@ const th = (content: string | number, cls = '') => cell('th', content, cls);
 const tr = (cells: string[]) => `<tr>${cells.join('')}</tr>`;
 
 /**
- * Fill a table's `<thead><tr>` with one `<th>` per label. All three tables set
- * their header a different way — one through `renderList` with a wrapper
- * lambda, one by joining a hand-built array into `setHtml`, and the data
- * table's through its column list — so the same row was written three ways and
- * the year-over-year one had to remember the `.join('')` itself.
+ * Fill a table card rendered by `renderTableCard`: one `<th>` per header label,
+ * then one row per item. The `-head` / `-body` ids pairing the two halves with
+ * their card were spelled out at eight call sites, and because each half was
+ * filled by its own function the three tables set their headers three different
+ * ways — two of them once at startup, far from the rows they label.
  */
-const renderHeadRow = (id: string, labels: readonly (string | number)[]): void =>
-  renderList(id, labels, l => th(l));
+function fillTable<T>(
+  id: string,
+  head: readonly (string | number)[],
+  items: readonly T[],
+  row: (item: T) => string,
+): void {
+  renderList(`${id}-head`, head, l => th(l));
+  renderList(`${id}-body`, items, row);
+}
+
+/** Empty a table card — its header along with its rows. */
+const clearTable = (id: string): void => fillTable(id, [], [], () => '');
 
 /**
  * The Bootstrap card well every panel on the page sits in: a
@@ -781,19 +791,15 @@ const TABLE_COLUMNS: TableColumn[] = [
   { label: 'Precip',    cell: r => r.precip, cls: r => (r.precip > 0 ? 'text-primary' : '') },
 ];
 
-function renderTableHead(): void {
-  renderHeadRow('data-table-head', TABLE_COLUMNS.map(c => c.label));
-}
-
 function renderTable(rows: WeatherRow[]): void {
-  renderList('data-table-body', rows, r =>
+  fillTable('data-table', TABLE_COLUMNS.map(c => c.label), rows, r =>
     tr(TABLE_COLUMNS.map(c => td(c.cell(r), typeof c.cls === 'function' ? c.cls(r) : c.cls))),
   );
 }
 
 function clearAll(): void {
   CHART_META.forEach(({ key }) => destroyChart(chartId(key)));
-  setHtml('data-table-body', '');
+  clearTable('data-table');
 }
 
 // --- Import button ---
@@ -956,12 +962,17 @@ function renderCompareSummary(
   };
   const fmt = (n: number | null) => (n == null ? '—' : n.toFixed(1));
 
-  renderList('cmp-summary-body', COMPARE_META, ({ row: name, key }) => {
-    const mine = avg(mineOf(key));
-    const theirs = avg(pubOf(key));
-    const diff = (mine != null && theirs != null) ? mine - theirs : null;
-    return tr([td(name), td(fmt(mine)), td(fmt(theirs)), deltaCell(diff, n => n.toFixed(1))]);
-  });
+  fillTable(
+    'cmp-summary',
+    ['Metric', 'My avg', 'Baar avg', 'Difference'],
+    COMPARE_META,
+    ({ row: name, key }) => {
+      const mine = avg(mineOf(key));
+      const theirs = avg(pubOf(key));
+      const diff = (mine != null && theirs != null) ? mine - theirs : null;
+      return tr([td(name), td(fmt(mine)), td(fmt(theirs)), deltaCell(diff, n => n.toFixed(1))]);
+    },
+  );
 }
 
 // --- Across years (year-over-year) ---
@@ -1096,8 +1107,7 @@ async function loadYoy(): Promise<void> {
   if (!data.years.length) {
     status.textContent = 'No data for this period.';
     YOY_METRICS.forEach(m => destroyChart(m.id));
-    setHtml('yoy-summary-head', '');
-    setHtml('yoy-summary-body', '');
+    clearTable('yoy-summary');
     return;
   }
   status.textContent = data.years.length < 2
@@ -1127,21 +1137,21 @@ function renderYoySummary(data: YoyResponse): void {
   // With ≥2 years, a trailing column shows the change from the earliest to the
   // latest year — the headline "how did this period differ" number.
   const hasDelta = data.years.length >= 2;
-  renderHeadRow('yoy-summary-head', [
-    'Metric',
-    ...data.years.map(y => y.year),
-    ...(hasDelta ? ['Δ latest−earliest'] : []),
-  ]);
 
-  renderList('yoy-summary-body', YOY_SUMMARY, m => {
-    const card = CARD_BY_PREFIX[m.prefix];
-    const text = (v: number) => statText(card, m.key, v);
-    const vals = data.years.map(y => card.pick(y.stats)[m.key]);
-    const delta = hasDelta
-      ? [deltaCell(round(last(vals)! - vals[0]), text)]
-      : [];
-    return tr([td(m.label), ...vals.map(v => td(text(v))), ...delta]);
-  });
+  fillTable(
+    'yoy-summary',
+    ['Metric', ...data.years.map(y => y.year), ...(hasDelta ? ['Δ latest−earliest'] : [])],
+    YOY_SUMMARY,
+    m => {
+      const card = CARD_BY_PREFIX[m.prefix];
+      const text = (v: number) => statText(card, m.key, v);
+      const vals = data.years.map(y => card.pick(y.stats)[m.key]);
+      const delta = hasDelta
+        ? [deltaCell(round(last(vals)! - vals[0]), text)]
+        : [];
+      return tr([td(m.label), ...vals.map(v => td(text(v))), ...delta]);
+    },
+  );
 }
 
 // --- Init ---
@@ -1154,10 +1164,7 @@ function renderYoySummary(data: YoyResponse): void {
   renderTableCard('data-table', true);
   renderTableCard('cmp-summary');
   renderTableCard('yoy-summary');
-  renderTableHead();
-  // The compare summary's columns are fixed; the other two heads are rendered
-  // from their own metadata when their data arrives.
-  renderHeadRow('cmp-summary-head', ['Metric', 'My avg', 'Baar avg', 'Difference']);
+  // Each table's header is filled alongside its rows, by whatever renders them.
   renderChartToggles();
   applyChartVisibility();   // apply persisted hidden state immediately, even before charts render
   await reloadDates();
