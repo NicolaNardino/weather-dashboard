@@ -207,6 +207,17 @@ function emptyEl(id: string): HTMLElement {
 }
 
 /**
+ * What a control strip's pickers currently hold, in document order — the one
+ * thing a view needs from the controls it just rendered into `emptyEl`. The
+ * dashboard and the year-over-year view each read their own strip back, and
+ * each spelled the same `Array.from(…querySelectorAll('select'))` out; one of
+ * them then took the values and the other passed the elements on, so the two
+ * `url`/`query` builders took different arguments for the same job.
+ */
+const pickerValues = (id: string): string[] =>
+  Array.from(el(id).querySelectorAll('select')).map(s => s.value);
+
+/**
  * Table markup. Every table on the page — the dashboard's data table and the
  * two comparison summaries — built its own `<td class="…">` / `<th>` / `<tr>`
  * strings, so the class attribute was spelled out even when empty in one place
@@ -417,32 +428,33 @@ interface PeriodSpec {
   /** Text on this period's nav tab. */
   label: string;
   controls: (el: HTMLElement, dates: string[]) => void;
-  url: (sels: HTMLSelectElement[]) => string;
+  /** Those pickers' values → this period's API call. */
+  url: (vals: string[]) => string;
 }
 
 const PERIODS = {
   day: {
     label: 'Day',
     controls: (el, dates) => el.append(mkSelect(asOptions(dates), last(dates), load)),
-    url: s => api('day', { date: s[0]?.value }),
+    url: v => api('day', { date: v[0] }),
   },
 
   week: {
     label: 'Week',
     controls: el => el.append(yearSelect(load), weekSelect(load)),
-    url: s => api('week', { year: s[0]?.value, week: s[1]?.value }),
+    url: v => api('week', { year: v[0], week: v[1] }),
   },
 
   month: {
     label: 'Month',
     controls: el => el.append(yearSelect(load), monthSelect(load)),
-    url: s => api('month', { year: s[0]?.value, month: s[1]?.value }),
+    url: v => api('month', { year: v[0], month: v[1] }),
   },
 
   year: {
     label: 'Year',
     controls: el => el.append(yearSelect(load)),
-    url: s => api('year', { year: s[0]?.value }),
+    url: v => api('year', { year: v[0] }),
   },
 
   range: {
@@ -470,11 +482,11 @@ const PERIODS = {
 
       el.append(allWrap, mutedLabel('From'), fromSel, mutedLabel('To'), toSel);
     },
-    url: s => {
+    url: v => {
       const all = (document.getElementById('range-all') as HTMLInputElement | null)?.checked;
       let [from, to] = all && allDates.length
         ? [allDates[0], last(allDates)]                  // whole dataset
-        : [s[0]?.value, s[1]?.value];
+        : [v[0], v[1]];
       if (from && to && from > to) [from, to] = [to, from]; // tolerate reversed picks
       return api('range', { from, to });
     },
@@ -552,11 +564,10 @@ async function reloadDates(): Promise<void> {
 
 // --- Load data ---
 async function load(): Promise<void> {
-  const sels = Array.from(el('controls').querySelectorAll('select'));
-
   let data: { rows: WeatherRow[]; stats: Stats };
   try {
-    data = await fetchJson<{ rows: WeatherRow[]; stats: Stats }>(PERIODS[period].url(sels));
+    const url = PERIODS[period].url(pickerValues('controls'));
+    data = await fetchJson<{ rows: WeatherRow[]; stats: Stats }>(url);
   } catch {
     // A period the server has no data for (the day route 404s) — blank the
     // dashboard rather than leaving the previous period's rows on screen.
@@ -1162,9 +1173,7 @@ function renderYoyControls(): void {
 
 /** Turn the current value pickers into the /api/across-years call. */
 function yoyUrl(): string {
-  const vals = Array.from(el('yoy-controls').querySelectorAll('select'))
-    .slice(1)                                   // [0] is the unit selector
-    .map(s => s.value);
+  const vals = pickerValues('yoy-controls').slice(1);   // [0] is the unit selector
   return api('across-years', { unit: yoyUnit, ...YOY_UNITS[yoyUnit].query(vals) });
 }
 
