@@ -82,20 +82,76 @@ function mkChart(id: string, type: string, data: any, extraOpts: any = {}): void
 }
 
 /**
- * Draw one chart per spec onto a shared x-axis. All three views — the
- * dashboard, Compare and Across Years — walk their own metadata list, and each
- * spelled out the same `mkChart(id, spec.type, { labels, datasets })` call;
- * they differ only in how a spec names its canvas and becomes datasets.
+ * What every chart spec on the page carries, whichever view it belongs to: how
+ * it is drawn, and optionally its own card geometry where that differs from the
+ * group's.
  */
-function drawCharts<T extends { type: string; opts?: any }>(
-  specs: readonly T[],
+interface ChartSpecBase {
+  type: string;
+  /** Chart-specific option overrides merged over CHART_DEFAULTS. */
+  opts?: any;
+  /** Overrides the group's column classes / canvas height for this chart. */
+  col?: string;
+  height?: number;
+}
+
+/**
+ * A view's charts as one thing: where their cards go, how a spec names and
+ * titles its canvas, and the cell geometry they share.
+ *
+ * The three views — the dashboard, Compare and Across Years — each used to
+ * restate that at every point which touched their charts: a card renderer, a
+ * `drawCharts` call and a teardown loop all named the same canvas their own
+ * way, and the three card renderers were the same `renderList(container,
+ * specs, chartCard(…))` written out three times.
+ */
+interface ChartGroup<T extends ChartSpecBase> {
+  /** Container the cards are rendered into. */
+  container: string;
+  specs: readonly T[];
+  /** This spec's canvas id. */
+  id: (spec: T) => string;
+  /** Heading on this spec's card. */
+  title: (spec: T) => string;
+  /** Card geometry for the group; a spec's own `col`/`height` wins. */
+  col: string;
+  height: number;
+  /**
+   * Tag each column with the `data-chart` attribute `applyChartVisibility()`
+   * hides it by. Only the dashboard's charts can be toggled off.
+   */
+  toggleKey?: (spec: T) => string;
+}
+
+/** Render one card per chart in the group. */
+function renderChartGroup<T extends ChartSpecBase>(g: ChartGroup<T>): void {
+  renderList(g.container, g.specs, spec =>
+    chartCard({
+      id: g.id(spec),
+      title: g.title(spec),
+      col: spec.col ?? g.col,
+      height: spec.height ?? g.height,
+      chartKey: g.toggleKey?.(spec),
+    }));
+}
+
+/**
+ * Draw one chart per spec in the group onto a shared x-axis. The views differ
+ * only in how a spec becomes datasets.
+ */
+function drawCharts<T extends ChartSpecBase>(
+  g: ChartGroup<T>,
   labels: string[],
-  id: (spec: T) => string,
   datasets: (spec: T) => any[],
 ): void {
-  for (const spec of specs) {
-    mkChart(id(spec), spec.type, { labels, datasets: datasets(spec) }, spec.opts);
+  for (const spec of g.specs) {
+    mkChart(g.id(spec), spec.type, { labels, datasets: datasets(spec) }, spec.opts);
   }
+}
+
+/** Tear the group's charts down — what a view does when it has no data to show. */
+function clearCharts<T extends ChartSpecBase>(g: ChartGroup<T>): void {
+  for (const spec of g.specs) destroyChart(g.id(spec));
 }
 
 /**
@@ -629,20 +685,15 @@ function setText(id: string, val: string | number): void {
 // possible while the cards lived in index.html). Each can be toggled off, which
 // removes its whole grid column so the rest reflow to fill the row; the choice
 // persists in localStorage.
-interface ChartSpec {
+interface ChartSpec extends ChartSpecBase {
   key: string;
   label: string;
   /** Appended to the label for the card heading: "Humidity (%)". */
   unit: string;
-  type: string;
-  /** Bootstrap column classes for this chart's cell. */
-  col: string;
-  /** Canvas height attribute — Chart.js uses it as the aspect-ratio hint. */
-  height: number;
-  /** One entry per plotted series: which measure it reads, and how it looks. */
+  /** One entry per plotted series: which measure it reads, and how it looks.
+      `col`/`height` come from ChartSpecBase: only the two charts that break the
+      grid's default cell size give their own. */
   series: { label: string; field: Measure; color: string; extra?: any }[];
-  /** Chart-specific option overrides merged over CHART_DEFAULTS. */
-  opts?: any;
 }
 
 /** A stored measure a dashboard series can plot. */
@@ -663,7 +714,7 @@ const CHART_META: ChartSpec[] = [
     series: [{ label: 'Precip', field: 'precip', color: '#60a5fa' }],
   },
   {
-    key: 'hum', label: 'Humidity', unit: '%', type: 'line', col: 'col-12 col-md-6 col-xl-4', height: 120,
+    key: 'hum', label: 'Humidity', unit: '%', type: 'line',
     series: [
       { label: 'High', field: 'hum_high', color: '#f87272', extra: { backgroundColor: '#f8727211', fill: true } },
       { label: 'Avg',  field: 'hum_avg',  color: '#facc15' },
@@ -673,14 +724,14 @@ const CHART_META: ChartSpec[] = [
     opts: { scales: { y: { min: 0, max: 100 } } },
   },
   {
-    key: 'pres', label: 'Pressure', unit: 'hPa', type: 'line', col: 'col-12 col-md-6 col-xl-4', height: 120,
+    key: 'pres', label: 'Pressure', unit: 'hPa', type: 'line',
     series: [
       { label: 'High', field: 'pres_high', color: '#a78bfa' },
       { label: 'Low',  field: 'pres_low',  color: '#818cf8', extra: { backgroundColor: '#818cf811', fill: true } },
     ],
   },
   {
-    key: 'wind', label: 'Wind', unit: 'km/h', type: 'line', col: 'col-12 col-md-6 col-xl-4', height: 120,
+    key: 'wind', label: 'Wind', unit: 'km/h', type: 'line',
     series: [
       { label: 'High', field: 'wind_high', color: '#fb923c', extra: { backgroundColor: '#fb923c11', fill: true } },
       { label: 'Avg',  field: 'wind_avg',  color: '#fdba74' },
@@ -707,11 +758,20 @@ let chartVisibility: Record<string, boolean> = loadChartVisibility();
 
 /**
  * A dashboard chart's canvas id. COMPARE_META and YOY_METRICS each name their
- * canvas outright; only these are derived from the key — and four places (the
- * card, the draw, the visibility resize and the teardown) each spelled the same
- * template out, so the id lived nowhere.
+ * canvas outright; only these are derived from the key.
  */
 const chartId = (key: string) => `chart-${key}`;
+
+/** The dashboard's charts: the only group whose cards can be toggled off. */
+const DASHBOARD_CHARTS: ChartGroup<ChartSpec> = {
+  container: 'chart-cards',
+  specs: CHART_META,
+  id: c => chartId(c.key),
+  title: c => `${c.label} (${c.unit})`,
+  col: 'col-12 col-md-6 col-xl-4',
+  height: 120,
+  toggleKey: c => c.key,
+};
 
 function applyChartVisibility(): void {
   CHART_META.forEach(c => {
@@ -756,24 +816,13 @@ function chartCard(o: {
     </div>`;
 }
 
-function renderChartCards(): void {
-  renderList('chart-cards', CHART_META, c =>
-    chartCard({
-      id: chartId(c.key),
-      title: `${c.label} (${c.unit})`,
-      col: c.col,
-      height: c.height,
-      chartKey: c.key,
-    }));
-}
-
 // --- Charts ---
 function labels(rows: WeatherRow[]): string[] {
   return rows.map(r => r.date.slice(5)); // MM-DD
 }
 
 function renderCharts(rows: WeatherRow[]): void {
-  drawCharts(CHART_META, labels(rows), c => chartId(c.key), c =>
+  drawCharts(DASHBOARD_CHARTS, labels(rows), c =>
     c.series.map(s => series(c.type, s.label, rows.map(r => r[s.field]), s.color, s.extra)));
   applyChartVisibility();
 }
@@ -811,7 +860,7 @@ function renderTable(rows: WeatherRow[]): void {
 }
 
 function clearAll(): void {
-  CHART_META.forEach(({ key }) => destroyChart(chartId(key)));
+  clearCharts(DASHBOARD_CHARTS);
   clearTable('data-table');
 }
 
@@ -840,10 +889,9 @@ importBtn.addEventListener('click', async () => {
 // card, the chart itself (`cmp-<id>`) *and* its summary-table row; they used to
 // be three hand-kept lists — two here and one in index.html — naming the same
 // four keys.
-interface CompareSpec {
+interface CompareSpec extends ChartSpecBase {
   id: string;
   key: SharedKey;
-  type: string;
   /** Suffix on the chart's series names ("Me · High"); bar charts use none. */
   series?: string;
   /** Heading on the chart card. */
@@ -862,10 +910,14 @@ const COMPARE_META: CompareSpec[] = [
     title: 'Wind Max (km/h)',       row: 'Wind Max (km/h)' },
 ];
 
-function renderCompareCards(): void {
-  renderList('cmp-chart-cards', COMPARE_META, m =>
-    chartCard({ id: m.id, title: m.title, col: 'col-12 col-xl-6', height: 110 }));
-}
+const COMPARE_CHARTS: ChartGroup<CompareSpec> = {
+  container: 'cmp-chart-cards',
+  specs: COMPARE_META,
+  id: m => m.id,
+  title: m => m.title,
+  col: 'col-12 col-xl-6',
+  height: 110,
+};
 
 const MINE_COLOR = '#38bdf8';
 const PUBLIC_COLOR = '#fb923c';
@@ -953,7 +1005,7 @@ async function loadCompare(): Promise<void> {
   const mineOf = (key: SharedKey) => lastRows.map(r => r[key] as number);
   const pubOf  = (key: SharedKey) => lastRows.map(r => (pub.get(r.date)?.[key] ?? null) as number | null);
 
-  drawCharts(COMPARE_META, labels(lastRows), m => m.id, m => {
+  drawCharts(COMPARE_CHARTS, labels(lastRows), m => {
     // Lines name their measure ("Me · High"); the bar chart has only one.
     const suffix = m.series ? ` · ${m.series}` : '';
     return [
@@ -1056,7 +1108,7 @@ const yearColor = (i: number) => YEAR_COLORS[i % YEAR_COLORS.length];
 // One chart per metric; each draws one line (or bar) per year. `get` reads the
 // plotted value from a row — a function, not a key, so derived measures like
 // mid-pressure fit the same list.
-interface YoyMetric { id: string; title: string; type: string; get: (r: WeatherRow) => number; }
+interface YoyMetric extends ChartSpecBase { id: string; title: string; get: (r: WeatherRow) => number; }
 const YOY_METRICS: YoyMetric[] = [
   { id: 'yoy-temp-avg',  title: 'Temp Avg (°C)',    type: 'line', get: r => r.temp_avg },
   { id: 'yoy-temp-high', title: 'Temp High (°C)',   type: 'line', get: r => r.temp_high },
@@ -1086,10 +1138,14 @@ const YOY_SUMMARY: { label: string; prefix: string; key: string }[] = [
 // The current comparison unit; its value pickers are rebuilt when it changes.
 let yoyUnit: YoyUnit = 'month';
 
-function renderYoyCards(): void {
-  renderList('yoy-chart-cards', YOY_METRICS, m =>
-    chartCard({ id: m.id, title: m.title, col: 'col-12 col-md-6 col-xl-4', height: 120 }));
-}
+const YOY_CHARTS: ChartGroup<YoyMetric> = {
+  container: 'yoy-chart-cards',
+  specs: YOY_METRICS,
+  id: m => m.id,
+  title: m => m.title,
+  col: 'col-12 col-md-6 col-xl-4',
+  height: 120,
+};
 
 /** Rebuild the unit selector and the value pickers it implies. */
 function renderYoyControls(): void {
@@ -1120,7 +1176,7 @@ async function loadYoy(): Promise<void> {
   el('yoy-heading').textContent = `${data.label} across years`;
   if (!data.years.length) {
     status.textContent = 'No data for this period.';
-    YOY_METRICS.forEach(m => destroyChart(m.id));
+    clearCharts(YOY_CHARTS);
     clearTable('yoy-summary');
     return;
   }
@@ -1134,7 +1190,7 @@ async function loadYoy(): Promise<void> {
   // year's value (or null where a year is missing that day).
   const byPos = data.years.map(yb => new Map(yb.rows.map(row => [spec.pos(row), row])));
 
-  drawCharts(YOY_METRICS, xlabels, m => m.id, metric =>
+  drawCharts(YOY_CHARTS, xlabels, metric =>
     data.years.map((yb, i) =>
       series(
         metric.type,
@@ -1172,9 +1228,9 @@ function renderYoySummary(data: YoyResponse): void {
 (async () => {
   renderPeriodTabs();
   renderStatCards();
-  renderChartCards();
-  renderCompareCards();
-  renderYoyCards();
+  renderChartGroup(DASHBOARD_CHARTS);
+  renderChartGroup(COMPARE_CHARTS);
+  renderChartGroup(YOY_CHARTS);
   renderTableCard('data-table', true);
   renderTableCard('cmp-summary');
   renderTableCard('yoy-summary');
