@@ -87,7 +87,10 @@ function mkChart(id: string, type: string, data: any, extraOpts: any = {}): void
  * group's.
  */
 interface ChartSpecBase {
-  type: string;
+  /** Chart.js type. Every chart here is a line unless it says otherwise, so
+      only the two bar charts carry one — thirteen specs across the three lists
+      restated `type: 'line'`, and `drawCharts` now resolves the default once. */
+  type?: string;
   /** Chart-specific option overrides merged over CHART_DEFAULTS. */
   opts?: any;
   /** Overrides the group's column classes / canvas height for this chart. */
@@ -137,15 +140,17 @@ function renderChartGroup<T extends ChartSpecBase>(g: ChartGroup<T>): void {
 
 /**
  * Draw one chart per spec in the group onto a shared x-axis. The views differ
- * only in how a spec becomes datasets.
+ * only in how a spec becomes datasets — which need the resolved chart type, so
+ * it is handed to them rather than each call site defaulting `spec.type` again.
  */
 function drawCharts<T extends ChartSpecBase>(
   g: ChartGroup<T>,
   labels: string[],
-  datasets: (spec: T) => any[],
+  datasets: (spec: T, type: string) => any[],
 ): void {
   for (const spec of g.specs) {
-    mkChart(g.id(spec), spec.type, { labels, datasets: datasets(spec) }, spec.opts);
+    const type = spec.type ?? 'line';
+    mkChart(g.id(spec), type, { labels, datasets: datasets(spec, type) }, spec.opts);
   }
 }
 
@@ -159,6 +164,10 @@ function clearCharts<T extends ChartSpecBase>(g: ChartGroup<T>): void {
  * line with the shared styling (which `extra` overrides). Every chart on the
  * page picks between the two forms per metric, and each spelled the same
  * ternary out.
+ *
+ * A line asking to be filled (`extra.fill`) is washed with its OWN colour: the
+ * four filled series each restated the line's hex a second time as an
+ * `'#rrggbb11'` background, so a recoloured series left its fill behind.
  */
 function series(
   type: string, label: string, data: (number | null)[], color: string, extra: any = {},
@@ -169,7 +178,7 @@ function series(
         label,
         data,
         borderColor: color,
-        backgroundColor: 'transparent',
+        backgroundColor: extra.fill ? `${color}11` : 'transparent',
         pointRadius: 2,
         tension: 0.3,
         ...extra,
@@ -712,7 +721,7 @@ type Measure = Exclude<keyof WeatherRow, 'date'>;
 
 const CHART_META: ChartSpec[] = [
   {
-    key: 'temp', label: 'Temperature', unit: '°C', type: 'line', col: 'col-12 col-xl-8', height: 110,
+    key: 'temp', label: 'Temperature', unit: '°C', col: 'col-12 col-xl-8', height: 110,
     series: [
       { label: 'High', field: 'temp_high', color: '#f87272' },
       { label: 'Avg',  field: 'temp_avg',  color: '#facc15' },
@@ -725,26 +734,26 @@ const CHART_META: ChartSpec[] = [
     series: [{ label: 'Precip', field: 'precip', color: '#60a5fa' }],
   },
   {
-    key: 'hum', label: 'Humidity', unit: '%', type: 'line',
+    key: 'hum', label: 'Humidity', unit: '%',
     series: [
-      { label: 'High', field: 'hum_high', color: '#f87272', extra: { backgroundColor: '#f8727211', fill: true } },
+      { label: 'High', field: 'hum_high', color: '#f87272', extra: { fill: true } },
       { label: 'Avg',  field: 'hum_avg',  color: '#facc15' },
-      { label: 'Low',  field: 'hum_low',  color: '#60a5fa', extra: { backgroundColor: '#60a5fa11', fill: true } },
+      { label: 'Low',  field: 'hum_low',  color: '#60a5fa', extra: { fill: true } },
     ],
     // Humidity is a percentage, so pin the axis rather than letting it autoscale.
     opts: { scales: { y: { min: 0, max: 100 } } },
   },
   {
-    key: 'pres', label: 'Pressure', unit: 'hPa', type: 'line',
+    key: 'pres', label: 'Pressure', unit: 'hPa',
     series: [
       { label: 'High', field: 'pres_high', color: '#a78bfa' },
-      { label: 'Low',  field: 'pres_low',  color: '#818cf8', extra: { backgroundColor: '#818cf811', fill: true } },
+      { label: 'Low',  field: 'pres_low',  color: '#818cf8', extra: { fill: true } },
     ],
   },
   {
-    key: 'wind', label: 'Wind', unit: 'km/h', type: 'line',
+    key: 'wind', label: 'Wind', unit: 'km/h',
     series: [
-      { label: 'High', field: 'wind_high', color: '#fb923c', extra: { backgroundColor: '#fb923c11', fill: true } },
+      { label: 'High', field: 'wind_high', color: '#fb923c', extra: { fill: true } },
       { label: 'Avg',  field: 'wind_avg',  color: '#fdba74' },
     ],
   },
@@ -833,8 +842,8 @@ function labels(rows: WeatherRow[]): string[] {
 }
 
 function renderCharts(rows: WeatherRow[]): void {
-  drawCharts(DASHBOARD_CHARTS, labels(rows), c =>
-    c.series.map(s => series(c.type, s.label, rows.map(r => r[s.field]), s.color, s.extra)));
+  drawCharts(DASHBOARD_CHARTS, labels(rows), (c, type) =>
+    c.series.map(s => series(type, s.label, rows.map(r => r[s.field]), s.color, s.extra)));
   applyChartVisibility();
 }
 
@@ -911,13 +920,13 @@ interface CompareSpec extends ChartSpecBase {
 }
 
 const COMPARE_META: CompareSpec[] = [
-  { id: 'cmp-temp-high', key: 'temp_high', type: 'line', series: 'High',
+  { id: 'cmp-temp-high', key: 'temp_high', series: 'High',
     title: 'Temperature High (°C)', row: 'Temp High (°C)' },
-  { id: 'cmp-temp-low',  key: 'temp_low',  type: 'line', series: 'Low',
+  { id: 'cmp-temp-low',  key: 'temp_low',  series: 'Low',
     title: 'Temperature Low (°C)',  row: 'Temp Low (°C)' },
   { id: 'cmp-precip',    key: 'precip',    type: 'bar',
     title: 'Precipitation (mm)',    row: 'Precip (mm)' },
-  { id: 'cmp-wind',      key: 'wind_high', type: 'line', series: 'Wind',
+  { id: 'cmp-wind',      key: 'wind_high', series: 'Wind',
     title: 'Wind Max (km/h)',       row: 'Wind Max (km/h)' },
 ];
 
@@ -1016,12 +1025,12 @@ async function loadCompare(): Promise<void> {
   const mineOf = (key: SharedKey) => lastRows.map(r => r[key] as number);
   const pubOf  = (key: SharedKey) => lastRows.map(r => (pub.get(r.date)?.[key] ?? null) as number | null);
 
-  drawCharts(COMPARE_CHARTS, labels(lastRows), m => {
+  drawCharts(COMPARE_CHARTS, labels(lastRows), (m, type) => {
     // Lines name their measure ("Me · High"); the bar chart has only one.
     const suffix = m.series ? ` · ${m.series}` : '';
     return [
-      series(m.type, `Me${suffix}`, mineOf(m.key), MINE_COLOR),
-      series(m.type, `Baar${suffix}`, pubOf(m.key), PUBLIC_COLOR, { borderDash: [5, 3] }),
+      series(type, `Me${suffix}`, mineOf(m.key), MINE_COLOR),
+      series(type, `Baar${suffix}`, pubOf(m.key), PUBLIC_COLOR, { borderDash: [5, 3] }),
     ];
   });
 
@@ -1121,13 +1130,13 @@ const yearColor = (i: number) => YEAR_COLORS[i % YEAR_COLORS.length];
 // mid-pressure fit the same list.
 interface YoyMetric extends ChartSpecBase { id: string; title: string; get: (r: WeatherRow) => number; }
 const YOY_METRICS: YoyMetric[] = [
-  { id: 'yoy-temp-avg',  title: 'Temp Avg (°C)',    type: 'line', get: r => r.temp_avg },
-  { id: 'yoy-temp-high', title: 'Temp High (°C)',   type: 'line', get: r => r.temp_high },
-  { id: 'yoy-temp-low',  title: 'Temp Low (°C)',    type: 'line', get: r => r.temp_low },
-  { id: 'yoy-hum-avg',   title: 'Humidity Avg (%)', type: 'line', get: r => r.hum_avg },
-  { id: 'yoy-wind-high', title: 'Wind Max (km/h)',  type: 'line', get: r => r.wind_high },
-  { id: 'yoy-pres-avg',  title: 'Pressure Avg (hPa)', type: 'line', get: r => (r.pres_high + r.pres_low) / 2 },
-  { id: 'yoy-precip',    title: 'Precipitation (mm)', type: 'bar',  get: r => r.precip },
+  { id: 'yoy-temp-avg',  title: 'Temp Avg (°C)',      get: r => r.temp_avg },
+  { id: 'yoy-temp-high', title: 'Temp High (°C)',     get: r => r.temp_high },
+  { id: 'yoy-temp-low',  title: 'Temp Low (°C)',      get: r => r.temp_low },
+  { id: 'yoy-hum-avg',   title: 'Humidity Avg (%)',   get: r => r.hum_avg },
+  { id: 'yoy-wind-high', title: 'Wind Max (km/h)',    get: r => r.wind_high },
+  { id: 'yoy-pres-avg',  title: 'Pressure Avg (hPa)', get: r => (r.pres_high + r.pres_low) / 2 },
+  { id: 'yoy-precip',    title: 'Precipitation (mm)', type: 'bar', get: r => r.precip },
 ];
 
 // The averages table, one row per stat. A row names the stat card it reads —
@@ -1199,10 +1208,10 @@ async function loadYoy(): Promise<void> {
   // year's value (or null where a year is missing that day).
   const byPos = data.years.map(yb => new Map(yb.rows.map(row => [spec.pos(row), row])));
 
-  drawCharts(YOY_CHARTS, xlabels, metric =>
+  drawCharts(YOY_CHARTS, xlabels, (metric, type) =>
     data.years.map((yb, i) =>
       series(
-        metric.type,
+        type,
         String(yb.year),
         positions.map(p => { const row = byPos[i].get(p); return row ? metric.get(row) : null; }),
         yearColor(i),

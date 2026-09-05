@@ -121,24 +121,25 @@ interface YoyUnit {
   /** Query params that must be present and numeric. */
   needs: string[];
   label: (q: Record<string, number>) => string;
-  rows: (q: Record<string, number>) => (year: number) => WeatherRow[];
+  /** One year's rows for this unit. */
+  rows: (q: Record<string, number>, year: number) => WeatherRow[];
 }
 
 const YOY_UNITS: Record<string, YoyUnit> = {
   day: {
     needs: ['month', 'day'],
     label: q => `${monthName(q.month)} ${q.day}`,
-    rows: q => y => queryDayRows(ymd(y, q.month, q.day)),
+    rows: (q, y) => queryDayRows(ymd(y, q.month, q.day)),
   },
   week: {
     needs: ['week'],
     label: q => `Week ${q.week}`,
-    rows: q => y => queryWeek(y, q.week),
+    rows: (q, y) => queryWeek(y, q.week),
   },
   month: {
     needs: ['month'],
     label: q => monthName(q.month),
-    rows: q => y => queryMonth(y, q.month),
+    rows: (q, y) => queryMonth(y, q.month),
   },
 };
 
@@ -216,9 +217,8 @@ app.get('/api/across-years', (req, res) => {
   const q = requireQuery(req, res, spec.needs, Number);
   if (!q) return;
 
-  const rowsFor = spec.rows(q);
   const years = queryYears()
-    .map(year => ({ year, rows: rowsFor(year) }))
+    .map(year => ({ year, rows: spec.rows(q, year) }))
     .filter(x => x.rows.length)
     .map(x => ({ ...x, stats: aggregateStats(x.rows) }));
 

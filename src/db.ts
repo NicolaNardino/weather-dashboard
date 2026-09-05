@@ -187,30 +187,26 @@ export function aggregateStats(rows: WeatherRow[]) {
   const sum = (f: Get) => rows.reduce((a, r) => a + f(r), 0);
   const avg = (f: Get, dp = 1) => round(sum(f) / rows.length, dp);
 
-  // Most measures are stored as a <prefix>_high/_avg/_low trio and aggregate the
-  // same way: the period's extremes around the mean of the daily averages.
-  // (Pressure is the exception — it has no stored average, see below.)
-  const triple = (p: 'temp' | 'hum' | 'dew') => ({
+  // Every <prefix>_high/_low pair aggregates the same way — the period's
+  // extremes around a mean. Only the mean differs: three measures average their
+  // stored daily average, while pressure has none and takes each day's mid-point
+  // instead, which used to mean spelling that whole group out a second time.
+  const triple = (p: 'temp' | 'hum' | 'dew' | 'pres', mean: Get, dp = 1) => ({
     high: max(r => r[`${p}_high`]),
-    avg:  avg(r => r[`${p}_avg`]),
+    avg:  avg(mean, dp),
     low:  min(r => r[`${p}_low`]),
   });
 
   return {
     count: rows.length,
-    temp: triple('temp'),
-    humidity: triple('hum'),
+    temp: triple('temp', r => r.temp_avg),
+    humidity: triple('hum', r => r.hum_avg),
     wind: {
       high: max(r => r.wind_high),
       avg:  avg(r => r.wind_avg),
     },
-    pressure: {
-      high: max(r => r.pres_high),
-      // Mid-point of each day's high/low, averaged over the period.
-      avg:  avg(r => (r.pres_high + r.pres_low) / 2, 2),
-      low:  min(r => r.pres_low),
-    },
-    dew: triple('dew'),
+    pressure: triple('pres', r => (r.pres_high + r.pres_low) / 2, 2),
+    dew: triple('dew', r => r.dew_avg),
     precip: {
       total: round(sum(r => r.precip), 2),
       max:   max(r => r.precip),
