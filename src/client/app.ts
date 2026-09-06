@@ -76,7 +76,7 @@ function chartOptions(extra: any): any {
 }
 
 function mkChart(id: string, type: string, data: any, extraOpts: any = {}): void {
-  const ctx = document.getElementById(id);
+  const ctx = el(id);
   destroyChart(id);
   charts[id] = new Chart(ctx, { type, data, options: chartOptions(extraOpts) });
 }
@@ -885,7 +885,7 @@ function clearAll(): void {
 }
 
 // --- Import button ---
-const importBtn = document.getElementById('btn-import') as HTMLButtonElement;
+const importBtn = el('btn-import') as HTMLButtonElement;
 importBtn.addEventListener('click', async () => {
   importBtn.textContent = '…';
   importBtn.disabled = true;
@@ -989,11 +989,14 @@ for (const o of OVERLAYS) {
  * Load an overlay view's data, reporting progress and failure on that view's
  * own status line rather than throwing. Both overlays spelled out the same
  * announce / fetch / catch-into-the-status-line sequence.
+ *
+ * It takes the status element rather than its id because both overlays write to
+ * that line themselves as well — for a guard, or for the "only one year" remark
+ * — so each named the same id twice and looked it up twice over.
  */
 async function loadInto<T>(
-  statusId: string, url: string, loading: string, failure: string,
+  status: HTMLElement, url: string, loading: string, failure: string,
 ): Promise<T | null> {
-  const status = el(statusId);
   status.textContent = loading;
   try {
     const data = await fetchJson<T>(url);
@@ -1006,8 +1009,9 @@ async function loadInto<T>(
 }
 
 async function loadCompare(): Promise<void> {
+  const status = el('cmp-status');
   if (!lastRows.length) {
-    el('cmp-status').textContent = 'No local data selected — pick a period on the dashboard first.';
+    status.textContent = 'No local data selected — pick a period on the dashboard first.';
     return;
   }
   const from = lastRows[0].date;
@@ -1015,7 +1019,7 @@ async function loadCompare(): Promise<void> {
   el('cmp-range').textContent = `${from} → ${to}`;
 
   const data = await loadInto<{ mine: WeatherRow[]; public: PublicRow[] }>(
-    'cmp-status', api('compare', { from, to }),
+    status, api('compare', { from, to }),
     'Loading public data…', 'Could not fetch public data',
   );
   if (!data) return;
@@ -1188,7 +1192,7 @@ function yoyUrl(): string {
 
 async function loadYoy(): Promise<void> {
   const status = el('yoy-status');
-  const data = await loadInto<YoyResponse>('yoy-status', yoyUrl(), 'Loading…', 'Could not load');
+  const data = await loadInto<YoyResponse>(status, yoyUrl(), 'Loading…', 'Could not load');
   if (!data) return;
 
   el('yoy-heading').textContent = `${data.label} across years`;

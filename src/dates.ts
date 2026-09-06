@@ -12,7 +12,7 @@
  * or east of UTC.
  */
 
-export const pad2 = (n: number): string => String(n).padStart(2, '0');
+const pad2 = (n: number): string => String(n).padStart(2, '0');
 
 /** Calendar parts → the `YYYY-MM-DD` key every stored date uses. */
 export const ymd = (year: number, month: number, day: number): string =>
