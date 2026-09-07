@@ -441,10 +441,20 @@ interface PeriodSpec {
   url: (vals: string[]) => string;
 }
 
+/**
+ * A picker over every date the data holds, defaulting to the newest — the Day
+ * period's one selector, and the Range period's "To". Range's "From" is the
+ * same picker with an earlier default, so all three now say `dateSelect` rather
+ * than restating the option list and the `last(dates)` default per site (which
+ * is exactly why `weekSelect`/`monthSelect`/`daySelect` above exist).
+ */
+const dateSelect = (dates: string[], onChange: () => void, selected = last(dates)) =>
+  mkSelect(asOptions(dates), selected, onChange);
+
 const PERIODS = {
   day: {
     label: 'Day',
-    controls: (el, dates) => el.append(mkSelect(asOptions(dates), last(dates), load)),
+    controls: (el, dates) => el.append(dateSelect(dates, load)),
     url: v => api('day', { date: v[0] }),
   },
 
@@ -472,28 +482,30 @@ const PERIODS = {
     // so the user can never select a window outside the recorded range.
     // From defaults to the last ~30 available days for a sensible window.
     controls: (el, dates) => {
-      const fromSel = mkSelect(asOptions(dates), dates[Math.max(0, dates.length - 30)], load);
-      const toSel = mkSelect(asOptions(dates), last(dates), load);
+      const fromSel = dateSelect(dates, load, dates[Math.max(0, dates.length - 30)]);
+      const toSel = dateSelect(dates, load);
 
       // "All" checkbox — when checked, span the entire dataset and disable the
-      // From/To pickers since the window is no longer user-controlled.
-      const allChk = mkEl('input', { type: 'checkbox', id: 'range-all', className: 'form-check-input mt-0' });
+      // From/To pickers since the window is no longer user-controlled. The
+      // strip is rebuilt from scratch here, so the flag starts off with it.
+      rangeAll = false;
+      const allChk = mkEl('input', { type: 'checkbox', className: 'form-check-input mt-0' });
       const allWrap = mkEl(
         'label',
         { className: 'text-muted small d-flex align-items-center gap-1 mb-0' },
         [allChk, 'All'],
       );
       allChk.addEventListener('change', () => {
-        fromSel.disabled = allChk.checked;
-        toSel.disabled = allChk.checked;
+        rangeAll = allChk.checked;
+        fromSel.disabled = rangeAll;
+        toSel.disabled = rangeAll;
         load();
       });
 
       el.append(allWrap, mutedLabel('From'), fromSel, mutedLabel('To'), toSel);
     },
     url: v => {
-      const all = (document.getElementById('range-all') as HTMLInputElement | null)?.checked;
-      let [from, to] = all && allDates.length
+      let [from, to] = rangeAll && allDates.length
         ? [allDates[0], last(allDates)]                  // whole dataset
         : [v[0], v[1]];
       if (from && to && from > to) [from, to] = [to, from]; // tolerate reversed picks
@@ -509,6 +521,14 @@ let period: Period = 'week';
 /** Every date the data holds, ascending — the pool every picker draws from. */
 let allDates: string[] = [];
 let lastRows: WeatherRow[] = [];   // rows from the most recent dashboard load (drives Compare range)
+/**
+ * Whether the Range period's "All" box is ticked. Held here because the box is
+ * the one control that isn't a picker `pickerValues` can read back: its handler
+ * used to leave the answer in the DOM under an id, which `url` then dug out
+ * again with `document.getElementById` and a cast — the only place left that
+ * reached for an element the page owns by any route other than `el`.
+ */
+let rangeAll = false;
 
 // --- Nav tabs ---
 // Built from PERIODS, like every other list on the page. The tabs used to be
@@ -1049,7 +1069,10 @@ function renderCompareSummary(
     const v = vals.filter((x): x is number => x != null && !Number.isNaN(x));
     return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
   };
-  const fmt = (n: number | null) => (n == null ? '—' : n.toFixed(1));
+  // One decimal, and the same one either way: the value columns show a missing
+  // average as an em dash, while the delta column formats only real numbers.
+  const one = (n: number) => n.toFixed(1);
+  const fmt = (n: number | null) => (n == null ? '—' : one(n));
 
   fillTable(
     'cmp-summary',
@@ -1059,7 +1082,7 @@ function renderCompareSummary(
       const mine = avg(mineOf(key));
       const theirs = avg(pubOf(key));
       const diff = (mine != null && theirs != null) ? mine - theirs : null;
-      return tr([td(name), td(fmt(mine)), td(fmt(theirs)), deltaCell(diff, n => n.toFixed(1))]);
+      return tr([td(name), td(fmt(mine)), td(fmt(theirs)), deltaCell(diff, one)]);
     },
   );
 }
