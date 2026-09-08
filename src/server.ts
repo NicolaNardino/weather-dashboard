@@ -1,6 +1,6 @@
 import express, { Request, Response } from 'express';
 import path from 'path';
-import { isoDay, ymd } from './dates';
+import { dayCount, isoDay, ymd } from './dates';
 import { DATA_FILE, describeImport, importFile } from './import';
 import {
   queryDayRows, queryWeek, queryMonth, queryYear, queryRange,
@@ -15,18 +15,6 @@ const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct'
 
 /** "Mar" for 3, falling back to the bare number for anything out of range. */
 const monthName = (m: number) => MONTH_NAMES[m - 1] ?? `Month ${m}`;
-
-// Every calendar day (YYYY-MM-DD) in [from, to] inclusive.
-function eachDate(from: string, to: string): string[] {
-  const out: string[] = [];
-  const d = new Date(`${from}T00:00:00Z`);
-  const end = new Date(`${to}T00:00:00Z`);
-  while (d <= end) {
-    out.push(isoDay(d));
-    d.setUTCDate(d.getUTCDate() + 1);
-  }
-  return out;
-}
 
 /**
  * The Open-Meteo daily series behind each cached field. Naming the pair once
@@ -184,11 +172,12 @@ app.get('/api/compare', async (req, res) => {
 
   const today = isoDay(new Date());
   const cached = queryPublicRange(BAAR.label, from, to);
-  const cachedDates = new Set(cached.map(r => r.date));
 
   // Today/future are forecasts that keep changing — never trust the cache for
   // them. Past days are stable, so a cache hit means we can skip the network.
-  const needsFetch = eachDate(from, to).some(d => d >= today || !cachedDates.has(d));
+  // The cache holds at most one row per day in the window, so counting the rows
+  // says whether any day is missing — no need to walk the calendar for it.
+  const needsFetch = to >= today || cached.length < dayCount(from, to);
   if (!needsFetch) return reply(cached, { cached: true });
 
   try {

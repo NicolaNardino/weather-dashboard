@@ -699,22 +699,15 @@ function renderStatCards(): void {
     </div>`);
 }
 
+// Every key a card's group carries has a span on the card — the headline's, or
+// one of the sub-line's — so each id below is one `renderStatCards` just wrote.
 function renderStats(s: Stats | undefined): void {
   if (!s) return;
   for (const c of STAT_CARDS) {
     for (const [key, value] of Object.entries(c.pick(s))) {
-      // A group can carry keys no card shows (precip.max); setText ignores those.
-      setText(statId(c.prefix, key), statText(c, key, value));
+      el(statId(c.prefix, key)).textContent = statText(c, key, value);
     }
   }
-}
-
-/** Like `el`, but tolerates a missing element — a stats group can carry keys no
-    card renders, so those ids simply aren't on the page. (Named `node` rather
-    than `el`, which shadowed the asserting helper of that name above.) */
-function setText(id: string, val: string | number): void {
-  const node = document.getElementById(id);
-  if (node) node.textContent = String(val);
 }
 
 // --- The dashboard charts ---

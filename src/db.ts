@@ -209,7 +209,6 @@ export function aggregateStats(rows: WeatherRow[]) {
     dew: triple('dew', r => r.dew_avg),
     precip: {
       total: round(sum(r => r.precip), 2),
-      max:   max(r => r.precip),
       rainy_days: rows.filter(r => r.precip > 0).length,
     },
   };
