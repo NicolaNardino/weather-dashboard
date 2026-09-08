@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { ymd } from './dates';
 import { COLUMNS, Field, FIELDS, queryAllRows, setMeta, upsertStmt } from './db';
 
 /** Strip units/thousands separators, keeping only what parseFloat reads. */
@@ -7,10 +8,10 @@ function parseNum(s: string): number {
   return parseFloat(s.replace(/[^\d.-]/g, ''));
 }
 
+/** The file's `MM/DD/YYYY` date as the `YYYY-MM-DD` key the DB stores, or null. */
 function parseDate(s: string): string | null {
   const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (!m) return null;
-  return `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`;
+  return m ? ymd(Number(m[3]), Number(m[1]), Number(m[2])) : null;
 }
 
 export interface ImportResult {
