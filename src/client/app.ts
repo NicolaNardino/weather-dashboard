@@ -352,32 +352,30 @@ function mkSelect(
 /** Value/label pairs where both are the same string (dates, years). */
 const asOptions = (values: string[]) => values.map(v => ({ value: v, label: v }));
 
-/** `count` options numbered 1..count, labelled by `label` (default: the number). */
-const numberOptions = (count: number, label: (n: number) => string = String) =>
-  Array.from({ length: count }, (_, i) => ({ value: String(i + 1), label: label(i + 1) }));
-
 const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
-// The three numbered pickers the dashboard and the year-over-year view share.
-// Fixed lists — the calendar doesn't change — so they are built once rather
-// than rebuilt on every render.
-const MONTH_OPTIONS = numberOptions(12, n => MONTH_NAMES[n - 1]);
-const WEEK_OPTIONS = numberOptions(53, n => `Week ${n}`);
-const DAY_OPTIONS = numberOptions(31);
-
 /**
- * Those pickers, each pre-selected to the reference date's own week / month /
- * day. The dashboard's period list and the year-over-year one both offer the
- * same three and differ only in what a change reloads — so each spelled the
- * same default out again, and a picker could end up defaulting to the reference
- * date in one view but not the other.
+ * Build one of the numbered pickers the dashboard and the year-over-year view
+ * share: options numbered 1..`count` labelled by `label`, pre-selected to the
+ * reference date's own value for that unit (so a fresh load lands on populated
+ * data — see `refDate`).
+ *
+ * The option list is built here, once — the calendar doesn't change — rather
+ * than on every render. Each picker used to declare its list and its default
+ * separately, so the two halves of one picker sat apart and a default could end
+ * up naming a value its own list didn't offer.
  */
-const weekSelect = (onChange: () => void) =>
-  mkSelect(WEEK_OPTIONS, String(isoWeek(refDate())), onChange);
-const monthSelect = (onChange: () => void) =>
-  mkSelect(MONTH_OPTIONS, String(refDate().getMonth() + 1), onChange);
-const daySelect = (onChange: () => void) =>
-  mkSelect(DAY_OPTIONS, String(refDate().getDate()), onChange);
+function numberedSelect(count: number, label: (n: number) => string, of: (d: Date) => number) {
+  const options = Array.from(
+    { length: count },
+    (_, i) => ({ value: String(i + 1), label: label(i + 1) }),
+  );
+  return (onChange: () => void) => mkSelect(options, String(of(refDate())), onChange);
+}
+
+const weekSelect = numberedSelect(53, n => `Week ${n}`, isoWeek);
+const monthSelect = numberedSelect(12, n => MONTH_NAMES[n - 1], d => d.getMonth() + 1);
+const daySelect = numberedSelect(31, String, d => d.getDate());
 
 /** A small dimmed caption sitting next to a picker. */
 const mutedLabel = (text: string) =>
