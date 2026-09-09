@@ -952,8 +952,24 @@ const COMPARE_CHARTS: ChartGroup<CompareSpec> = {
   height: 110,
 };
 
-const MINE_COLOR = '#38bdf8';
-const PUBLIC_COLOR = '#fb923c';
+/**
+ * One side of the Compare view: my station, and the public service it is
+ * measured against. Each side used to be spelled out at every point that draws
+ * it — its chart series, its summary column and that column's heading — so the
+ * pair, and the order the difference between them is taken in, lived in three
+ * places rather than one, and the public side was named four times over.
+ */
+interface CompareSide {
+  /** Series name on the charts; a line appends its measure ("Me · High"). */
+  name: string;
+  /** Heading over this side's summary column. */
+  head: string;
+  color: string;
+  /** Extra Chart.js styling — only the public series is dashed. */
+  extra?: any;
+  /** This side's values for one measure, on my dates. */
+  values: (key: SharedKey) => (number | null)[];
+}
 
 /**
  * A signed-difference table cell — warm when it rose, cool when it fell, "—"
@@ -1039,25 +1055,24 @@ async function loadCompare(): Promise<void> {
 
   // Align public rows to my dates so both series share the same x-axis.
   const pub = new Map<string, PublicRow>(data.public.map(p => [p.date, p]));
-  const mineOf = (key: SharedKey) => lastRows.map(r => r[key] as number);
-  const pubOf  = (key: SharedKey) => lastRows.map(r => (pub.get(r.date)?.[key] ?? null) as number | null);
+  const sides: CompareSide[] = [
+    { name: 'Me', head: 'My avg', color: '#38bdf8', values: key => lastRows.map(r => r[key]) },
+    {
+      name: 'Baar', head: 'Baar avg', color: '#fb923c', extra: { borderDash: [5, 3] },
+      values: key => lastRows.map(r => pub.get(r.date)?.[key] ?? null),
+    },
+  ];
 
-  drawCharts(COMPARE_CHARTS, labels(lastRows), (m, type) => {
-    // Lines name their measure ("Me · High"); the bar chart has only one.
-    const suffix = m.series ? ` · ${m.series}` : '';
-    return [
-      series(type, `Me${suffix}`, mineOf(m.key), MINE_COLOR),
-      series(type, `Baar${suffix}`, pubOf(m.key), PUBLIC_COLOR, { borderDash: [5, 3] }),
-    ];
-  });
+  // Lines name their measure ("Me · High"); the bar chart has only one.
+  drawCharts(COMPARE_CHARTS, labels(lastRows), (m, type) =>
+    sides.map(s =>
+      series(type, `${s.name}${m.series ? ` · ${m.series}` : ''}`, s.values(m.key), s.color, s.extra),
+    ));
 
-  renderCompareSummary(mineOf, pubOf);
+  renderCompareSummary(sides);
 }
 
-function renderCompareSummary(
-  mineOf: (key: SharedKey) => number[],
-  pubOf: (key: SharedKey) => (number | null)[],
-): void {
+function renderCompareSummary(sides: CompareSide[]): void {
   const avg = (vals: (number | null)[]): number | null => {
     const v = vals.filter((x): x is number => x != null && !Number.isNaN(x));
     return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
@@ -1069,11 +1084,10 @@ function renderCompareSummary(
 
   fillTable(
     'cmp-summary',
-    ['Metric', 'My avg', 'Baar avg', 'Difference'],
+    ['Metric', ...sides.map(s => s.head), 'Difference'],
     COMPARE_META,
     ({ row: name, key }) => {
-      const mine = avg(mineOf(key));
-      const theirs = avg(pubOf(key));
+      const [mine, theirs] = sides.map(s => avg(s.values(key)));
       const diff = (mine != null && theirs != null) ? mine - theirs : null;
       return tr([td(name), td(fmt(mine)), td(fmt(theirs)), deltaCell(diff, one)]);
     },
