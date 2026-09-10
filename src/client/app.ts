@@ -193,6 +193,17 @@ function series(
  */
 const last = <T>(xs: readonly T[]): T | undefined => xs[xs.length - 1];
 
+/**
+ * `[1 … n]` — the ascending slot numbers the numbered pickers and the
+ * year-over-year x-axes are built from. Three sites each wrote the same list
+ * their own way: two spelled out `Array.from({ length: n }, (_, i) => i + 1)`
+ * and the third gave the seven weekdays as a literal, so a one-based count read
+ * as index arithmetic in one place and as data in another. (Named `oneTo`
+ * rather than `range` — this page already has a Range period meaning a window
+ * of dates.)
+ */
+const oneTo = (n: number): number[] => Array.from({ length: n }, (_, i) => i + 1);
+
 /** `getElementById`, asserted — every id below is one this page owns. */
 const el = (id: string) => document.getElementById(id)!;
 
@@ -366,10 +377,7 @@ const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct'
  * up naming a value its own list didn't offer.
  */
 function numberedSelect(count: number, label: (n: number) => string, of: (d: Date) => number) {
-  const options = Array.from(
-    { length: count },
-    (_, i) => ({ value: String(i + 1), label: label(i + 1) }),
-  );
+  const options = oneTo(count).map(n => ({ value: String(n), label: label(n) }));
   return (onChange: () => void) => mkSelect(options, String(of(refDate())), onChange);
 }
 
@@ -434,7 +442,7 @@ function renderButtonGroup<T>(
 interface PeriodSpec {
   /** Text on this period's nav tab. */
   label: string;
-  controls: (el: HTMLElement, dates: string[]) => void;
+  controls: (el: HTMLElement) => void;
   /** Those pickers' values → this period's API call. */
   url: (vals: string[]) => string;
 }
@@ -443,16 +451,21 @@ interface PeriodSpec {
  * A picker over every date the data holds, defaulting to the newest — the Day
  * period's one selector, and the Range period's "To". Range's "From" is the
  * same picker with an earlier default, so all three now say `dateSelect` rather
- * than restating the option list and the `last(dates)` default per site (which
- * is exactly why `weekSelect`/`monthSelect`/`daySelect` above exist).
+ * than restating the option list and the `last(allDates)` default per site
+ * (which is exactly why `weekSelect`/`monthSelect`/`daySelect` above exist).
+ *
+ * It reads `allDates` itself, the way `yearSelect` and the Range period's own
+ * `url` already do. Handing the pool to `controls` instead meant a parameter
+ * that was only ever the very global those two read directly, so the same list
+ * reached the pickers by two routes.
  */
-const dateSelect = (dates: string[], onChange: () => void, selected = last(dates)) =>
-  mkSelect(asOptions(dates), selected, onChange);
+const dateSelect = (onChange: () => void, selected = last(allDates)) =>
+  mkSelect(asOptions(allDates), selected, onChange);
 
 const PERIODS = {
   day: {
     label: 'Day',
-    controls: (el, dates) => el.append(dateSelect(dates, load)),
+    controls: el => el.append(dateSelect(load)),
     url: v => api('day', { date: v[0] }),
   },
 
@@ -479,9 +492,9 @@ const PERIODS = {
     // Two date pickers populated ONLY from dates that exist in the data,
     // so the user can never select a window outside the recorded range.
     // From defaults to the last ~30 available days for a sensible window.
-    controls: (el, dates) => {
-      const fromSel = dateSelect(dates, load, dates[Math.max(0, dates.length - 30)]);
-      const toSel = dateSelect(dates, load);
+    controls: el => {
+      const fromSel = dateSelect(load, allDates[Math.max(0, allDates.length - 30)]);
+      const toSel = dateSelect(load);
 
       // "All" checkbox — when checked, span the entire dataset and disable the
       // From/To pickers since the window is no longer user-controlled. The
@@ -549,7 +562,7 @@ function renderPeriodTabs(): void {
 
 // --- Controls ---
 function renderControls(): void {
-  PERIODS[period].controls(emptyEl('controls'), allDates);
+  PERIODS[period].controls(emptyEl('controls'));
 }
 
 function yearSelect(onChange: () => void): HTMLSelectElement {
@@ -1134,7 +1147,7 @@ const YOY_UNITS = {
     query: v => ({ week: v[0] }),
     pos: r => localDate(r.date).getDay() || 7,           // Mon=1..Sun=7
     axis: () => ({
-      positions: [1, 2, 3, 4, 5, 6, 7],
+      positions: oneTo(7),
       labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
     }),
   },
@@ -1145,7 +1158,7 @@ const YOY_UNITS = {
     query: v => ({ month: v[0] }),
     pos: r => Number(r.date.slice(8, 10)),               // day of month, 1..31
     axis: () => {
-      const positions = Array.from({ length: 31 }, (_, i) => i + 1);
+      const positions = oneTo(31);
       return { positions, labels: positions.map(String) };
     },
   },
