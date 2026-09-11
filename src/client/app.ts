@@ -340,7 +340,7 @@ function mkEl<K extends keyof HTMLElementTagNameMap>(
   children: (Node | string)[] = [],
 ): HTMLElementTagNameMap[K] {
   const node = Object.assign(document.createElement(tag), props);
-  children.forEach(c => node.append(c));
+  node.append(...children);
   return node;
 }
 
@@ -628,13 +628,13 @@ async function refreshStatus(): Promise<void> {
     const { last_import, records } =
       await fetchJson<{ last_import: string | null; records: number }>('/api/status');
     const stamp = el('last-import');
-    if (last_import) {
-      const when = new Date(last_import);
-      stamp.textContent = `Imported ${when.toLocaleString()} · ${records} records`;
-      stamp.title = `Last import: ${when.toString()}`;
-    } else {
+    if (!last_import) {
       stamp.textContent = 'Not yet imported';
+      return;
     }
+    const when = new Date(last_import);
+    stamp.textContent = `Imported ${when.toLocaleString()} · ${records} records`;
+    stamp.title = `Last import: ${when.toString()}`;
   } catch { /* non-critical */ }
 }
 
