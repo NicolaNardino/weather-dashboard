@@ -340,7 +340,7 @@ function mkEl<K extends keyof HTMLElementTagNameMap>(
   children: (Node | string)[] = [],
 ): HTMLElementTagNameMap[K] {
   const node = Object.assign(document.createElement(tag), props);
-  children.forEach(c => node.append(c));
+  node.append(...children);
   return node;
 }
 
@@ -628,13 +628,13 @@ async function refreshStatus(): Promise<void> {
     const { last_import, records } =
       await fetchJson<{ last_import: string | null; records: number }>('/api/status');
     const stamp = el('last-import');
-    if (last_import) {
-      const when = new Date(last_import);
-      stamp.textContent = `Imported ${when.toLocaleString()} · ${records} records`;
-      stamp.title = `Last import: ${when.toString()}`;
-    } else {
+    if (!last_import) {
       stamp.textContent = 'Not yet imported';
+      return;
     }
+    const when = new Date(last_import);
+    stamp.textContent = `Imported ${when.toLocaleString()} · ${records} records`;
+    stamp.title = `Last import: ${when.toString()}`;
   } catch { /* non-critical */ }
 }
 
@@ -992,6 +992,54 @@ function deltaCell(diff: number | null, fmt: (n: number) => string): string {
   return td(`${diff > 0 ? '+' : ''}${fmt(diff)}`, diff > 0 ? 'text-danger' : diff < 0 ? 'text-info' : '');
 }
 
+/**
+ * A comparison summary table: one row per metric, one column per thing being
+ * compared, and a trailing signed difference between the first column and the
+ * last. Both comparison views are exactly this — mine-vs-Baar over two columns,
+ * year-over-year over one per year — and each spelled out the same header
+ * assembly, the same row assembly, the same em dash for a missing figure and the
+ * same "only when both ends are there" guard around its difference.
+ *
+ * `delta.of` is the caller's because the two take the difference in opposite
+ * directions (mine − theirs; latest − earliest) and only one of them rounds;
+ * it is handed both ends already known to be present, which is the part that
+ * was written twice.
+ */
+function renderDeltaTable<T>(
+  id: string,
+  o: {
+    /** Heading over each compared column, in order. */
+    columns: (string | number)[];
+    metrics: readonly T[];
+    label: (m: T) => string;
+    /** This metric's value per column; null where a column has no figure. */
+    values: (m: T) => (number | null)[];
+    /** How this metric's numbers read — the unit differs per row in one view. */
+    format: (m: T) => (n: number) => string;
+    /** The difference column, or null when there is nothing to compare against. */
+    delta: { head: string; of: (first: number, latest: number) => number } | null;
+  },
+): void {
+  const { delta } = o;
+  fillTable(
+    id,
+    ['Metric', ...o.columns, ...(delta ? [delta.head] : [])],
+    o.metrics,
+    m => {
+      const values = o.values(m);
+      const fmt = o.format(m);
+      const first = values[0];
+      const latest = last(values);
+      const diff = delta && first != null && latest != null ? delta.of(first, latest) : null;
+      return tr([
+        td(o.label(m)),
+        ...values.map(v => td(v == null ? '—' : fmt(v))),
+        ...(delta ? [deltaCell(diff, fmt)] : []),
+      ]);
+    },
+  );
+}
+
 // The page has three mutually-exclusive views, each `<name>-view` in the markup:
 // the dashboard, plus two overlays reached from their own navbar button. One
 // entry per overlay drives the button's active state, its toggle handler and
@@ -1088,21 +1136,17 @@ function renderCompareSummary(sides: CompareSide[]): void {
     const v = vals.filter((x): x is number => x != null && !Number.isNaN(x));
     return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
   };
-  // One decimal, and the same one either way: the value columns show a missing
-  // average as an em dash, while the delta column formats only real numbers.
+  // One decimal throughout — every measure compared here is a plain reading.
   const one = (n: number) => n.toFixed(1);
-  const fmt = (n: number | null) => (n == null ? '—' : one(n));
 
-  fillTable(
-    'cmp-summary',
-    ['Metric', ...sides.map(s => s.head), 'Difference'],
-    COMPARE_META,
-    ({ row: name, key }) => {
-      const [mine, theirs] = sides.map(s => avg(s.values(key)));
-      const diff = (mine != null && theirs != null) ? mine - theirs : null;
-      return tr([td(name), td(fmt(mine)), td(fmt(theirs)), deltaCell(diff, one)]);
-    },
-  );
+  renderDeltaTable('cmp-summary', {
+    columns: sides.map(s => s.head),
+    metrics: COMPARE_META,
+    label: m => m.row,
+    values: m => sides.map(s => avg(s.values(m.key))),
+    format: () => one,
+    delta: { head: 'Difference', of: (mine, theirs) => mine - theirs },
+  });
 }
 
 // --- Across years (year-over-year) ---
@@ -1267,24 +1311,25 @@ async function loadYoy(): Promise<void> {
 
 function renderYoySummary(data: YoyResponse): void {
   const round = (v: number) => Math.round(v * 10) / 10;
-  // With ≥2 years, a trailing column shows the change from the earliest to the
-  // latest year — the headline "how did this period differ" number.
-  const hasDelta = data.years.length >= 2;
 
-  fillTable(
-    'yoy-summary',
-    ['Metric', ...data.years.map(y => y.year), ...(hasDelta ? ['Δ latest−earliest'] : [])],
-    YOY_SUMMARY,
-    m => {
-      const card = CARD_BY_PREFIX[m.prefix];
-      const text = (v: number) => statText(card, m.key, v);
-      const vals = data.years.map(y => card.pick(y.stats)[m.key]);
-      const delta = hasDelta
-        ? [deltaCell(round(last(vals)! - vals[0]), text)]
-        : [];
-      return tr([td(m.label), ...vals.map(v => td(text(v))), ...delta]);
-    },
-  );
+  renderDeltaTable('yoy-summary', {
+    columns: data.years.map(y => y.year),
+    metrics: YOY_SUMMARY,
+    label: m => m.label,
+    // A row names the stat card it reads, so both the accessor and the unit come
+    // from STAT_CARDS rather than being restated here.
+    values: m => data.years.map(y => CARD_BY_PREFIX[m.prefix].pick(y.stats)[m.key]),
+    format: m => v => statText(CARD_BY_PREFIX[m.prefix], m.key, v),
+    // With ≥2 years, a trailing column shows the change from the earliest to the
+    // latest year — the headline "how did this period differ" number.
+    delta:
+      data.years.length >= 2
+        ? {
+            head: 'Δ latest−earliest',
+            of: (earliest, latest) => round(latest - earliest),
+          }
+        : null,
+  });
 }
 
 // --- Init ---
