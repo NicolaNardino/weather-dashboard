@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import path from 'path';
-import { isoDay, ymd } from './dates';
+import { addDays, isoDay, ymd } from './dates';
 
 const DB_PATH = path.join(process.cwd(), 'weather.db');
 
@@ -129,12 +129,8 @@ export function queryWeek(year: number, week: number): WeatherRow[] {
   // ISO week: walk back from Jan 4 (always in week 1) to that week's Monday.
   // Built in UTC to match `isoDay`, which reads the date back out that way.
   const jan4 = new Date(Date.UTC(year, 0, 4));
-  const monday = new Date(jan4);
-  monday.setUTCDate(jan4.getUTCDate() - ((jan4.getUTCDay() || 7) - 1) + (week - 1) * 7);
-  const sunday = new Date(monday);
-  sunday.setUTCDate(monday.getUTCDate() + 6);
-
-  return queryRange(isoDay(monday), isoDay(sunday));
+  const monday = addDays(jan4, -((jan4.getUTCDay() || 7) - 1) + (week - 1) * 7);
+  return queryRange(isoDay(monday), isoDay(addDays(monday, 6)));
 }
 
 /** Every stored row. Only the import needs this — it diffs against what's there. */

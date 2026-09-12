@@ -52,19 +52,24 @@ async function fetchOpenMeteo(from: string, to: string): Promise<PublicRow[]> {
   })) as PublicRow[];
 }
 
+/** The default reader: the param as given, an absent one as ''. */
+const asString = (v: string | undefined): string => v ?? '';
+
 /**
  * Read the named query params, answering 400 and returning null if any comes
  * back falsy. The message names them in order, e.g. "year and week required".
  *
  * `read` decides what falsy means: by default an absent or empty string, and
  * with `Number` a value that isn't a positive number (a period index is never
- * 0) — already converted, so the numeric routes need no second pass.
+ * 0) — already converted, so the numeric routes need no second pass. The cast
+ * on the default is unavoidable: `asString` only satisfies `T` in the `T =
+ * string` case it is the default for.
  */
 function requireQuery<T extends string | number = string>(
   req: Request,
   res: Response,
   names: string[],
-  read: (v: string | undefined) => T = (v => v ?? '') as (v: string | undefined) => T,
+  read: (v: string | undefined) => T = asString as (v: string | undefined) => T,
 ): Record<string, T> | null {
   const q = req.query as Record<string, string | undefined>;
   const vals = Object.fromEntries(names.map(n => [n, read(q[n])])) as Record<string, T>;

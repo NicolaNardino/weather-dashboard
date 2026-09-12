@@ -21,6 +21,17 @@ export const ymd = (year: number, month: number, day: number): string =>
 /** A `Date` as its UTC `YYYY-MM-DD` day. */
 export const isoDay = (d: Date): string => d.toISOString().slice(0, 10);
 
+/**
+ * `d` shifted by `days`, as a new `Date` — the week query walked the calendar
+ * twice by copying a date and then mutating the copy, which reads as two steps
+ * and leaves a half-built date in scope between them.
+ */
+export const addDays = (d: Date, days: number): Date => {
+  const shifted = new Date(d);
+  shifted.setUTCDate(d.getUTCDate() + days);
+  return shifted;
+};
+
 /** How many calendar days `[from, to]` spans, both ends included. */
 export const dayCount = (from: string, to: string): number =>
   Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000) + 1;

@@ -983,14 +983,24 @@ interface CompareSide {
 }
 
 /**
+ * A figure's table cell, or an em dash where there is no figure. Every number
+ * in both comparison tables is missing-tolerant, and the em-dash rule was
+ * written once for the compared columns and again inside the delta cell — so
+ * "no figure" had two spellings a row apart.
+ */
+const numCell = (v: number | null, fmt: (n: number) => string, cls = ''): string =>
+  td(v == null ? '—' : fmt(v), cls);
+
+/**
  * A signed-difference table cell — warm when it rose, cool when it fell, "—"
  * when either side is missing. Both comparison tables (mine-vs-public and
  * year-over-year) render their delta column this way.
  */
-function deltaCell(diff: number | null, fmt: (n: number) => string): string {
-  if (diff == null) return td('—');
-  return td(`${diff > 0 ? '+' : ''}${fmt(diff)}`, diff > 0 ? 'text-danger' : diff < 0 ? 'text-info' : '');
-}
+const diffClass = (diff: number | null): string =>
+  !diff ? '' : diff > 0 ? 'text-danger' : 'text-info';
+
+const deltaCell = (diff: number | null, fmt: (n: number) => string): string =>
+  numCell(diff, n => `${n > 0 ? '+' : ''}${fmt(n)}`, diffClass(diff));
 
 /**
  * A comparison summary table: one row per metric, one column per thing being
@@ -1033,7 +1043,7 @@ function renderDeltaTable<T>(
       const diff = delta && first != null && latest != null ? delta.of(first, latest) : null;
       return tr([
         td(o.label(m)),
-        ...values.map(v => td(v == null ? '—' : fmt(v))),
+        ...values.map(v => numCell(v, fmt)),
         ...(delta ? [deltaCell(diff, fmt)] : []),
       ]);
     },
