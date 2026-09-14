@@ -434,17 +434,41 @@ function renderButtonGroup<T>(
 
 /**
  * One entry per period selector. `controls` populates the header with that
- * period's pickers; `url` turns whatever those pickers now hold into the API
- * call. Keeping the pair together means the `period` string is dispatched once
- * rather than in two `if/else` chains that had to stay in step — a new period
- * is one entry, not two branches in two places.
+ * period's pickers; `params` turns whatever those pickers now hold into that
+ * period's query. Keeping them together means the `period` string is dispatched
+ * once rather than in two `if/else` chains that had to stay in step — a new
+ * period is one entry, not two branches in two places.
  */
 interface PeriodSpec {
   /** Text on this period's nav tab. */
   label: string;
+  /** The `/api/<path>` this period loads. */
+  path: string;
   controls: (el: HTMLElement) => void;
-  /** Those pickers' values → this period's API call. */
-  url: (vals: string[]) => string;
+  /** Those pickers' values → this period's query params. */
+  params: (vals: string[]) => Params;
+}
+
+/** A control a strip is built from: it rebuilds itself around `onChange`. */
+type Picker = (onChange: () => void) => HTMLElement;
+
+/**
+ * A control strip whose pickers ARE its query params: one ordered list of
+ * `[param name, picker]` pairs drives both halves — rendering the strip, and
+ * reading it back into the call.
+ *
+ * Seven of the eight period/unit entries below spelled those halves out
+ * separately: `controls` appended the pickers in one order and `params` read
+ * them back at hand-written `v[0]` / `v[1]` positions, so the two had to agree
+ * with nothing checking that they did. Adding a picker meant editing both, and
+ * inserting one anywhere but the end silently re-labelled every param after it.
+ */
+function paramPickers(onChange: () => void, named: [string, Picker][]) {
+  return {
+    controls: (el: HTMLElement) => el.append(...named.map(([, picker]) => picker(onChange))),
+    params: (vals: string[]): Params =>
+      Object.fromEntries(named.map(([name], i) => [name, vals[i]])),
+  };
 }
 
 /**
@@ -463,32 +487,31 @@ const dateSelect = (onChange: () => void, selected = last(allDates)) =>
   mkSelect(asOptions(allDates), selected, onChange);
 
 const PERIODS = {
-  day: {
-    label: 'Day',
-    controls: el => el.append(dateSelect(load)),
-    url: v => api('day', { date: v[0] }),
-  },
+  day: { label: 'Day', path: 'day', ...paramPickers(load, [['date', dateSelect]]) },
 
   week: {
     label: 'Week',
-    controls: el => el.append(yearSelect(load), weekSelect(load)),
-    url: v => api('week', { year: v[0], week: v[1] }),
+    path: 'week',
+    ...paramPickers(load, [
+      ['year', yearSelect],
+      ['week', weekSelect],
+    ]),
   },
 
   month: {
     label: 'Month',
-    controls: el => el.append(yearSelect(load), monthSelect(load)),
-    url: v => api('month', { year: v[0], month: v[1] }),
+    path: 'month',
+    ...paramPickers(load, [
+      ['year', yearSelect],
+      ['month', monthSelect],
+    ]),
   },
 
-  year: {
-    label: 'Year',
-    controls: el => el.append(yearSelect(load)),
-    url: v => api('year', { year: v[0] }),
-  },
+  year: { label: 'Year', path: 'year', ...paramPickers(load, [['year', yearSelect]]) },
 
   range: {
     label: 'Range',
+    path: 'range',
     // Two date pickers populated ONLY from dates that exist in the data,
     // so the user can never select a window outside the recorded range.
     // From defaults to the last ~30 available days for a sensible window.
@@ -515,12 +538,12 @@ const PERIODS = {
 
       el.append(allWrap, mutedLabel('From'), fromSel, mutedLabel('To'), toSel);
     },
-    url: v => {
+    params: v => {
       let [from, to] = rangeAll && allDates.length
         ? [allDates[0], last(allDates)]                  // whole dataset
         : [v[0], v[1]];
       if (from && to && from > to) [from, to] = [to, from]; // tolerate reversed picks
-      return api('range', { from, to });
+      return { from, to };
     },
   },
 } satisfies Record<string, PeriodSpec>;
@@ -606,7 +629,8 @@ async function reloadDates(): Promise<void> {
 async function load(): Promise<void> {
   let data: { rows: WeatherRow[]; stats: Stats };
   try {
-    const url = PERIODS[period].url(pickerValues('controls'));
+    const spec = PERIODS[period];
+    const url = api(spec.path, spec.params(pickerValues('controls')));
     data = await fetchJson<{ rows: WeatherRow[]; stats: Stats }>(url);
   } catch {
     // A period the server has no data for (the day route 404s) — blank the
@@ -1179,7 +1203,7 @@ interface YoyUnitSpec {
   controls: (el: HTMLElement) => void;
   /** Those pickers' values → this unit's /api/across-years params. The `unit`
       param itself comes from the entry's own key, so it isn't restated here. */
-  query: (vals: string[]) => Params;
+  params: (vals: string[]) => Params;
   /** The row's slot inside its period, so the same slot lines up across years. */
   pos: (r: WeatherRow) => number;
   /** The shared x-axis for this unit: slot positions and their labels. */
@@ -1189,16 +1213,17 @@ interface YoyUnitSpec {
 const YOY_UNITS = {
   day: {
     label: 'Day',
-    controls: el => el.append(monthSelect(loadYoy), daySelect(loadYoy)),
-    query: v => ({ month: v[0], day: v[1] }),
+    ...paramPickers(loadYoy, [
+      ['month', monthSelect],
+      ['day', daySelect],
+    ]),
     pos: () => 1,                                        // a single slot
     axis: label => ({ positions: [1], labels: [label] }),
   },
 
   week: {
     label: 'Week',
-    controls: el => el.append(weekSelect(loadYoy)),
-    query: v => ({ week: v[0] }),
+    ...paramPickers(loadYoy, [['week', weekSelect]]),
     pos: r => localDate(r.date).getDay() || 7,           // Mon=1..Sun=7
     axis: () => ({
       positions: oneTo(7),
@@ -1208,8 +1233,7 @@ const YOY_UNITS = {
 
   month: {
     label: 'Month',
-    controls: el => el.append(monthSelect(loadYoy)),
-    query: v => ({ month: v[0] }),
+    ...paramPickers(loadYoy, [['month', monthSelect]]),
     pos: r => Number(r.date.slice(8, 10)),               // day of month, 1..31
     axis: () => {
       const positions = oneTo(31);
@@ -1282,7 +1306,7 @@ function renderYoyControls(): void {
 /** Turn the current value pickers into the /api/across-years call. */
 function yoyUrl(): string {
   const vals = pickerValues('yoy-controls').slice(1);   // [0] is the unit selector
-  return api('across-years', { unit: yoyUnit, ...YOY_UNITS[yoyUnit].query(vals) });
+  return api('across-years', { unit: yoyUnit, ...YOY_UNITS[yoyUnit].params(vals) });
 }
 
 async function loadYoy(): Promise<void> {
