@@ -83,8 +83,8 @@ function mkChart(id: string, type: string, data: any, extraOpts: any = {}): void
 
 /**
  * What every chart spec on the page carries, whichever view it belongs to: how
- * it is drawn, and optionally its own card geometry where that differs from the
- * group's.
+ * it is drawn, and optionally its own card geometry where that differs from its
+ * view's.
  */
 interface ChartSpecBase {
   /** Chart.js type. Every chart here is a line unless it says otherwise, so
@@ -93,32 +93,44 @@ interface ChartSpecBase {
   type?: string;
   /** Chart-specific option overrides merged over CHART_DEFAULTS. */
   opts?: any;
-  /** Overrides the group's column classes / canvas height for this chart. */
+  /** Overrides the view's column classes / canvas height for this chart. */
   col?: string;
   height?: number;
 }
 
 /**
- * A view's charts as one thing: where their cards go, how a spec names and
- * titles its canvas, and the cell geometry they share.
+ * A view as one thing: its charts — where their cards go, how a spec names and
+ * titles its canvas, the cell geometry they share — and the one table sitting
+ * under them.
  *
- * The three views — the dashboard, Compare and Across Years — each used to
- * restate that at every point which touched their charts: a card renderer, a
+ * The three views (the dashboard, Compare and Across Years) each used to
+ * restate that at every point which touched them: a card renderer, a
  * `drawCharts` call and a teardown loop all named the same canvas their own
  * way, and the three card renderers were the same `renderList(container,
  * specs, chartCard(…))` written out three times.
+ *
+ * The table came in last and stayed outside, so each view's table id went on
+ * being spelled out as a literal at the two or three places that touch it —
+ * built at startup here, filled by whatever renders its rows there, emptied in
+ * a third — and "empty this view" was a pair of calls, tearing the charts down
+ * and then clearing the table, written out per view with nothing tying the two
+ * halves together.
  */
-interface ChartGroup<T extends ChartSpecBase> {
-  /** Container the cards are rendered into. */
+interface View<T extends ChartSpecBase> {
+  /** Container the chart cards are rendered into. */
   container: string;
   specs: readonly T[];
   /** This spec's canvas id. */
   id: (spec: T) => string;
   /** Heading on this spec's card. */
   title: (spec: T) => string;
-  /** Card geometry for the group; a spec's own `col`/`height` wins. */
+  /** Card geometry for the view; a spec's own `col`/`height` wins. */
   col: string;
   height: number;
+  /** The view's one table card: the dashboard's data table, or a summary. */
+  table: string;
+  /** Row highlighting — only the dashboard's long data table wants it. */
+  tableHover?: boolean;
   /**
    * Tag each column with the `data-chart` attribute `applyChartVisibility()`
    * hides it by. Only the dashboard's charts can be toggled off.
@@ -126,37 +138,39 @@ interface ChartGroup<T extends ChartSpecBase> {
   toggleKey?: (spec: T) => string;
 }
 
-/** Render one card per chart in the group. */
-function renderChartGroup<T extends ChartSpecBase>(g: ChartGroup<T>): void {
-  renderList(g.container, g.specs, spec =>
+/** Build the view's empty shell: one card per chart, then its table card. */
+function renderView<T extends ChartSpecBase>(v: View<T>): void {
+  renderList(v.container, v.specs, spec =>
     chartCard({
-      id: g.id(spec),
-      title: g.title(spec),
-      col: spec.col ?? g.col,
-      height: spec.height ?? g.height,
-      chartKey: g.toggleKey?.(spec),
+      id: v.id(spec),
+      title: v.title(spec),
+      col: spec.col ?? v.col,
+      height: spec.height ?? v.height,
+      chartKey: v.toggleKey?.(spec),
     }));
+  renderTableCard(v.table, v.tableHover);
 }
 
 /**
- * Draw one chart per spec in the group onto a shared x-axis. The views differ
+ * Draw one chart per spec in the view onto a shared x-axis. The views differ
  * only in how a spec becomes datasets — which need the resolved chart type, so
  * it is handed to them rather than each call site defaulting `spec.type` again.
  */
 function drawCharts<T extends ChartSpecBase>(
-  g: ChartGroup<T>,
+  v: View<T>,
   labels: string[],
   datasets: (spec: T, type: string) => any[],
 ): void {
-  for (const spec of g.specs) {
+  for (const spec of v.specs) {
     const type = spec.type ?? 'line';
-    mkChart(g.id(spec), type, { labels, datasets: datasets(spec, type) }, spec.opts);
+    mkChart(v.id(spec), type, { labels, datasets: datasets(spec, type) }, spec.opts);
   }
 }
 
-/** Tear the group's charts down — what a view does when it has no data to show. */
-function clearCharts<T extends ChartSpecBase>(g: ChartGroup<T>): void {
-  for (const spec of g.specs) destroyChart(g.id(spec));
+/** Empty the view — charts and table alike — when it has no data to show. */
+function clearView<T extends ChartSpecBase>(v: View<T>): void {
+  for (const spec of v.specs) destroyChart(v.id(spec));
+  clearTable(v.table);
 }
 
 /**
@@ -830,14 +844,16 @@ let chartVisibility: Record<string, boolean> = loadChartVisibility();
  */
 const chartId = (key: string) => `chart-${key}`;
 
-/** The dashboard's charts: the only group whose cards can be toggled off. */
-const DASHBOARD_CHARTS: ChartGroup<ChartSpec> = {
+/** The dashboard: the only view whose chart cards can be toggled off. */
+const DASHBOARD_VIEW: View<ChartSpec> = {
   container: 'chart-cards',
   specs: CHART_META,
   id: c => chartId(c.key),
   title: c => `${c.label} (${c.unit})`,
   col: 'col-12 col-md-6 col-xl-4',
   height: 120,
+  table: 'data-table',
+  tableHover: true,
   toggleKey: c => c.key,
 };
 
@@ -890,7 +906,7 @@ function labels(rows: WeatherRow[]): string[] {
 }
 
 function renderCharts(rows: WeatherRow[]): void {
-  drawCharts(DASHBOARD_CHARTS, labels(rows), (c, type) =>
+  drawCharts(DASHBOARD_VIEW, labels(rows), (c, type) =>
     c.series.map(s => series(type, s.label, rows.map(r => r[s.field]), s.color, s.extra)));
   applyChartVisibility();
 }
@@ -922,14 +938,13 @@ const TABLE_COLUMNS: TableColumn[] = [
 ];
 
 function renderTable(rows: WeatherRow[]): void {
-  fillTable('data-table', TABLE_COLUMNS.map(c => c.label), rows, r =>
+  fillTable(DASHBOARD_VIEW.table, TABLE_COLUMNS.map(c => c.label), rows, r =>
     tr(TABLE_COLUMNS.map(c => td(c.cell(r), typeof c.cls === 'function' ? c.cls(r) : c.cls))),
   );
 }
 
 function clearAll(): void {
-  clearCharts(DASHBOARD_CHARTS);
-  clearTable('data-table');
+  clearView(DASHBOARD_VIEW);
 }
 
 // --- Import button ---
@@ -978,13 +993,14 @@ const COMPARE_META: CompareSpec[] = [
     title: 'Wind Max (km/h)',       row: 'Wind Max (km/h)' },
 ];
 
-const COMPARE_CHARTS: ChartGroup<CompareSpec> = {
+const COMPARE_VIEW: View<CompareSpec> = {
   container: 'cmp-chart-cards',
   specs: COMPARE_META,
   id: m => m.id,
   title: m => m.title,
   col: 'col-12 col-xl-6',
   height: 110,
+  table: 'cmp-summary',
 };
 
 /**
@@ -1157,7 +1173,7 @@ async function loadCompare(): Promise<void> {
   ];
 
   // Lines name their measure ("Me · High"); the bar chart has only one.
-  drawCharts(COMPARE_CHARTS, labels(lastRows), (m, type) =>
+  drawCharts(COMPARE_VIEW, labels(lastRows), (m, type) =>
     sides.map(s =>
       series(type, `${s.name}${m.series ? ` · ${m.series}` : ''}`, s.values(m.key), s.color, s.extra),
     ));
@@ -1173,7 +1189,7 @@ function renderCompareSummary(sides: CompareSide[]): void {
   // One decimal throughout — every measure compared here is a plain reading.
   const one = (n: number) => n.toFixed(1);
 
-  renderDeltaTable('cmp-summary', {
+  renderDeltaTable(COMPARE_VIEW.table, {
     columns: sides.map(s => s.head),
     metrics: COMPARE_META,
     label: m => m.row,
@@ -1281,13 +1297,14 @@ const YOY_SUMMARY: { label: string; prefix: string; key: string }[] = [
 // The current comparison unit; its value pickers are rebuilt when it changes.
 let yoyUnit: YoyUnit = 'month';
 
-const YOY_CHARTS: ChartGroup<YoyMetric> = {
+const YOY_VIEW: View<YoyMetric> = {
   container: 'yoy-chart-cards',
   specs: YOY_METRICS,
   id: m => m.id,
   title: m => m.title,
   col: 'col-12 col-md-6 col-xl-4',
   height: 120,
+  table: 'yoy-summary',
 };
 
 /** Rebuild the unit selector and the value pickers it implies. */
@@ -1317,8 +1334,7 @@ async function loadYoy(): Promise<void> {
   el('yoy-heading').textContent = `${data.label} across years`;
   if (!data.years.length) {
     status.textContent = 'No data for this period.';
-    clearCharts(YOY_CHARTS);
-    clearTable('yoy-summary');
+    clearView(YOY_VIEW);
     return;
   }
   status.textContent = data.years.length < 2
@@ -1331,7 +1347,7 @@ async function loadYoy(): Promise<void> {
   // year's value (or null where a year is missing that day).
   const byPos = data.years.map(yb => new Map(yb.rows.map(row => [spec.pos(row), row])));
 
-  drawCharts(YOY_CHARTS, xlabels, (metric, type) =>
+  drawCharts(YOY_VIEW, xlabels, (metric, type) =>
     data.years.map((yb, i) =>
       series(
         type,
@@ -1346,7 +1362,7 @@ async function loadYoy(): Promise<void> {
 function renderYoySummary(data: YoyResponse): void {
   const round = (v: number) => Math.round(v * 10) / 10;
 
-  renderDeltaTable('yoy-summary', {
+  renderDeltaTable(YOY_VIEW.table, {
     columns: data.years.map(y => y.year),
     metrics: YOY_SUMMARY,
     label: m => m.label,
@@ -1370,13 +1386,11 @@ function renderYoySummary(data: YoyResponse): void {
 (async () => {
   renderPeriodTabs();
   renderStatCards();
-  renderChartGroup(DASHBOARD_CHARTS);
-  renderChartGroup(COMPARE_CHARTS);
-  renderChartGroup(YOY_CHARTS);
-  renderTableCard('data-table', true);
-  renderTableCard('cmp-summary');
-  renderTableCard('yoy-summary');
-  // Each table's header is filled alongside its rows, by whatever renders them.
+  // Each view builds its own shell: chart cards, then its table card. Each
+  // table's header is filled alongside its rows, by whatever renders them.
+  renderView(DASHBOARD_VIEW);
+  renderView(COMPARE_VIEW);
+  renderView(YOY_VIEW);
   renderChartToggles();
   applyChartVisibility();   // apply persisted hidden state immediately, even before charts render
   await reloadDates();
