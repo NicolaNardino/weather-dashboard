@@ -447,19 +447,21 @@ function renderButtonGroup<T>(
 }
 
 /**
- * One entry per period selector. `controls` populates the header with that
- * period's pickers; `params` turns whatever those pickers now hold into that
- * period's query. Keeping them together means the `period` string is dispatched
- * once rather than in two `if/else` chains that had to stay in step — a new
- * period is one entry, not two branches in two places.
+ * One entry of a dispatch table keyed by what it selects — a dashboard period,
+ * or a year-over-year comparison unit. `controls` populates a strip with that
+ * entry's pickers; `params` turns whatever those pickers now hold into its
+ * query. Keeping them together means the key is dispatched once rather than in
+ * two `if/else` chains that had to stay in step — a new entry is one line, not
+ * two branches in two places.
+ *
+ * Both tables below carry exactly this, and each used to spell the three
+ * members out with the same explanation attached.
  */
-interface PeriodSpec {
-  /** Text on this period's nav tab. */
+interface ControlStrip {
+  /** Text on the tab or option that picks this entry. */
   label: string;
-  /** The `/api/<path>` this period loads. */
-  path: string;
   controls: (el: HTMLElement) => void;
-  /** Those pickers' values → this period's query params. */
+  /** Those pickers' values → this entry's query params. */
   params: (vals: string[]) => Params;
 }
 
@@ -477,7 +479,10 @@ type Picker = (onChange: () => void) => HTMLElement;
  * with nothing checking that they did. Adding a picker meant editing both, and
  * inserting one anywhere but the end silently re-labelled every param after it.
  */
-function paramPickers(onChange: () => void, named: [string, Picker][]) {
+function paramPickers(
+  onChange: () => void,
+  named: [string, Picker][],
+): Omit<ControlStrip, 'label'> {
   return {
     controls: (el: HTMLElement) => el.append(...named.map(([, picker]) => picker(onChange))),
     params: (vals: string[]): Params =>
@@ -500,12 +505,17 @@ function paramPickers(onChange: () => void, named: [string, Picker][]) {
 const dateSelect = (onChange: () => void, selected = last(allDates)) =>
   mkSelect(asOptions(allDates), selected, onChange);
 
+/**
+ * One entry per period selector. Each key is also the `/api/<key>` route that
+ * period loads — day, week, month, year and range are named the same on both
+ * sides — so the endpoint comes from the entry's own key rather than a `path`
+ * field restating it, the way `YOY_UNITS` below already takes its `unit` param.
+ */
 const PERIODS = {
-  day: { label: 'Day', path: 'day', ...paramPickers(load, [['date', dateSelect]]) },
+  day: { label: 'Day', ...paramPickers(load, [['date', dateSelect]]) },
 
   week: {
     label: 'Week',
-    path: 'week',
     ...paramPickers(load, [
       ['year', yearSelect],
       ['week', weekSelect],
@@ -514,18 +524,16 @@ const PERIODS = {
 
   month: {
     label: 'Month',
-    path: 'month',
     ...paramPickers(load, [
       ['year', yearSelect],
       ['month', monthSelect],
     ]),
   },
 
-  year: { label: 'Year', path: 'year', ...paramPickers(load, [['year', yearSelect]]) },
+  year: { label: 'Year', ...paramPickers(load, [['year', yearSelect]]) },
 
   range: {
     label: 'Range',
-    path: 'range',
     // Two date pickers populated ONLY from dates that exist in the data,
     // so the user can never select a window outside the recorded range.
     // From defaults to the last ~30 available days for a sensible window.
@@ -560,7 +568,7 @@ const PERIODS = {
       return { from, to };
     },
   },
-} satisfies Record<string, PeriodSpec>;
+} satisfies Record<string, ControlStrip>;
 
 type Period = keyof typeof PERIODS;
 
@@ -643,14 +651,13 @@ async function reloadDates(): Promise<void> {
 async function load(): Promise<void> {
   let data: { rows: WeatherRow[]; stats: Stats };
   try {
-    const spec = PERIODS[period];
-    const url = api(spec.path, spec.params(pickerValues('controls')));
+    const url = api(period, PERIODS[period].params(pickerValues('controls')));
     data = await fetchJson<{ rows: WeatherRow[]; stats: Stats }>(url);
   } catch {
     // A period the server has no data for (the day route 404s) — blank the
     // dashboard rather than leaving the previous period's rows on screen.
     lastRows = [];
-    clearAll();
+    clearView(DASHBOARD_VIEW);
     return;
   }
 
@@ -839,8 +846,8 @@ function loadChartVisibility(): Record<string, boolean> {
 let chartVisibility: Record<string, boolean> = loadChartVisibility();
 
 /**
- * A dashboard chart's canvas id. COMPARE_META and YOY_METRICS each name their
- * canvas outright; only these are derived from the key.
+ * A dashboard chart's canvas id. Only YOY_METRICS names its canvases outright —
+ * its series are derived measures with no stored field to name them after.
  */
 const chartId = (key: string) => `chart-${key}`;
 
@@ -943,10 +950,6 @@ function renderTable(rows: WeatherRow[]): void {
   );
 }
 
-function clearAll(): void {
-  clearView(DASHBOARD_VIEW);
-}
-
 // --- Import button ---
 const importBtn = el('btn-import') as HTMLButtonElement;
 importBtn.addEventListener('click', async () => {
@@ -973,7 +976,6 @@ importBtn.addEventListener('click', async () => {
 // be three hand-kept lists — two here and one in index.html — naming the same
 // four keys.
 interface CompareSpec extends ChartSpecBase {
-  id: string;
   key: SharedKey;
   /** Suffix on the chart's series names ("Me · High"); bar charts use none. */
   series?: string;
@@ -982,21 +984,25 @@ interface CompareSpec extends ChartSpecBase {
   row: string;
 }
 
+/** A Compare chart's canvas id, named after the measure it plots — the four
+    entries below each restated theirs as a literal alongside that measure. */
+const cmpId = (key: SharedKey) => `cmp-${key.replace(/_/g, '-')}`;
+
 const COMPARE_META: CompareSpec[] = [
-  { id: 'cmp-temp-high', key: 'temp_high', series: 'High',
+  { key: 'temp_high', series: 'High',
     title: 'Temperature High (°C)', row: 'Temp High (°C)' },
-  { id: 'cmp-temp-low',  key: 'temp_low',  series: 'Low',
+  { key: 'temp_low',  series: 'Low',
     title: 'Temperature Low (°C)',  row: 'Temp Low (°C)' },
-  { id: 'cmp-precip',    key: 'precip',    type: 'bar',
+  { key: 'precip',    type: 'bar',
     title: 'Precipitation (mm)',    row: 'Precip (mm)' },
-  { id: 'cmp-wind',      key: 'wind_high', series: 'Wind',
+  { key: 'wind_high', series: 'Wind',
     title: 'Wind Max (km/h)',       row: 'Wind Max (km/h)' },
 ];
 
 const COMPARE_VIEW: View<CompareSpec> = {
   container: 'cmp-chart-cards',
   specs: COMPARE_META,
-  id: m => m.id,
+  id: m => cmpId(m.key),
   title: m => m.title,
   col: 'col-12 col-xl-6',
   height: 110,
@@ -1208,18 +1214,14 @@ interface YearBlock { year: number; rows: WeatherRow[]; stats: Stats; }
 interface YoyResponse { unit: YoyUnit; label: string; years: YearBlock[]; }
 
 /**
- * One entry per comparison unit — its tab label, its value pickers, the query
- * those pickers imply, where a row sits inside the period and the shared
- * x-axis. Like PERIODS above, the unit is dispatched once here rather than in
- * four if/else chains (controls, url, position, axis) that had to stay in step.
+ * One entry per comparison unit — its `ControlStrip` (label, value pickers and
+ * the /api/across-years params they imply, with the `unit` param itself coming
+ * from the entry's own key), plus where a row sits inside the period and the
+ * shared x-axis. Like PERIODS above, the unit is dispatched once here rather
+ * than in four if/else chains (controls, url, position, axis) that had to stay
+ * in step.
  */
-interface YoyUnitSpec {
-  label: string;
-  /** Appends this unit's value pickers after the unit selector. */
-  controls: (el: HTMLElement) => void;
-  /** Those pickers' values → this unit's /api/across-years params. The `unit`
-      param itself comes from the entry's own key, so it isn't restated here. */
-  params: (vals: string[]) => Params;
+interface YoyUnitSpec extends ControlStrip {
   /** The row's slot inside its period, so the same slot lines up across years. */
   pos: (r: WeatherRow) => number;
   /** The shared x-axis for this unit: slot positions and their labels. */
