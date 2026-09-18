@@ -1327,21 +1327,24 @@ const YOY_VIEW = view<YoyMetric>('yoy', {
 
 /** Rebuild the unit selector and the value pickers it implies. */
 function renderYoyControls(): void {
-  const controls = emptyEl('yoy-controls');
-
   const unitSel = mkSelect(
     (Object.keys(YOY_UNITS) as YoyUnit[]).map(k => ({ value: k, label: YOY_UNITS[k].label })),
     yoyUnit,
     () => { yoyUnit = unitSel.value as YoyUnit; renderYoyControls(); loadYoy(); },
   );
-  controls.append(mutedLabel('Compare'), unitSel);
-  YOY_UNITS[yoyUnit].controls(controls);
+  // The unit selector picks WHICH strip to show, so it sits in its own box
+  // beside the strip rather than at the head of it — leaving `yoy-controls`
+  // holding exactly the unit's own value pickers, in the order it named them.
+  emptyEl('yoy-unit').append(mutedLabel('Compare'), unitSel);
+  YOY_UNITS[yoyUnit].controls(emptyEl('yoy-controls'));
 }
 
 /** Turn the current value pickers into the /api/across-years call. */
 function yoyUrl(): string {
-  const vals = pickerValues('yoy-controls').slice(1);   // [0] is the unit selector
-  return api('across-years', { unit: yoyUnit, ...YOY_UNITS[yoyUnit].params(vals) });
+  return api('across-years', {
+    unit: yoyUnit,
+    ...YOY_UNITS[yoyUnit].params(pickerValues('yoy-controls')),
+  });
 }
 
 async function loadYoy(): Promise<void> {
