@@ -117,7 +117,9 @@ interface ChartSpecBase {
  * halves together.
  */
 interface View<T extends ChartSpecBase> {
-  /** Container the chart cards are rendered into. */
+  /** The view's own element in the markup; `view()` names the two halves below. */
+  root: string;
+  /** Container the chart cards are rendered into: `<root>-charts`. */
   container: string;
   specs: readonly T[];
   /** This spec's canvas id. */
@@ -127,7 +129,7 @@ interface View<T extends ChartSpecBase> {
   /** Card geometry for the view; a spec's own `col`/`height` wins. */
   col: string;
   height: number;
-  /** The view's one table card: the dashboard's data table, or a summary. */
+  /** The view's one table card: `<root>-table`. */
   table: string;
   /** Row highlighting — only the dashboard's long data table wants it. */
   tableHover?: boolean;
@@ -138,8 +140,28 @@ interface View<T extends ChartSpecBase> {
   toggleKey?: (spec: T) => string;
 }
 
+/**
+ * A view, with the ids of its two halves derived from its own root element.
+ *
+ * Those two containers were hand-written in index.html — a chart row carrying
+ * `row g-3 mb-3` and a table div — so each view's pair of ids was spelled out
+ * once there and again here, and the grid classes on the row were restated per
+ * view. index.html now declares one empty div per view and this names the
+ * halves inside it, which is the same move the cards themselves already made.
+ */
+function view<T extends ChartSpecBase>(
+  root: string,
+  rest: Omit<View<T>, 'root' | 'container' | 'table'>,
+): View<T> {
+  return { ...rest, root, container: `${root}-charts`, table: `${root}-table` };
+}
+
 /** Build the view's empty shell: one card per chart, then its table card. */
 function renderView<T extends ChartSpecBase>(v: View<T>): void {
+  setHtml(
+    v.root,
+    `<div class="row g-3 mb-3" id="${v.container}"></div><div id="${v.table}"></div>`,
+  );
   renderList(v.container, v.specs, spec =>
     chartCard({
       id: v.id(spec),
@@ -852,17 +874,15 @@ let chartVisibility: Record<string, boolean> = loadChartVisibility();
 const chartId = (key: string) => `chart-${key}`;
 
 /** The dashboard: the only view whose chart cards can be toggled off. */
-const DASHBOARD_VIEW: View<ChartSpec> = {
-  container: 'chart-cards',
+const DASHBOARD_VIEW = view<ChartSpec>('dashboard', {
   specs: CHART_META,
   id: c => chartId(c.key),
   title: c => `${c.label} (${c.unit})`,
   col: 'col-12 col-md-6 col-xl-4',
   height: 120,
-  table: 'data-table',
   tableHover: true,
   toggleKey: c => c.key,
-};
+});
 
 function applyChartVisibility(): void {
   CHART_META.forEach(c => {
@@ -999,15 +1019,13 @@ const COMPARE_META: CompareSpec[] = [
     title: 'Wind Max (km/h)',       row: 'Wind Max (km/h)' },
 ];
 
-const COMPARE_VIEW: View<CompareSpec> = {
-  container: 'cmp-chart-cards',
+const COMPARE_VIEW = view<CompareSpec>('cmp', {
   specs: COMPARE_META,
   id: m => cmpId(m.key),
   title: m => m.title,
   col: 'col-12 col-xl-6',
   height: 110,
-  table: 'cmp-summary',
-};
+});
 
 /**
  * One side of the Compare view: my station, and the public service it is
@@ -1299,33 +1317,34 @@ const YOY_SUMMARY: { label: string; prefix: string; key: string }[] = [
 // The current comparison unit; its value pickers are rebuilt when it changes.
 let yoyUnit: YoyUnit = 'month';
 
-const YOY_VIEW: View<YoyMetric> = {
-  container: 'yoy-chart-cards',
+const YOY_VIEW = view<YoyMetric>('yoy', {
   specs: YOY_METRICS,
   id: m => m.id,
   title: m => m.title,
   col: 'col-12 col-md-6 col-xl-4',
   height: 120,
-  table: 'yoy-summary',
-};
+});
 
 /** Rebuild the unit selector and the value pickers it implies. */
 function renderYoyControls(): void {
-  const controls = emptyEl('yoy-controls');
-
   const unitSel = mkSelect(
     (Object.keys(YOY_UNITS) as YoyUnit[]).map(k => ({ value: k, label: YOY_UNITS[k].label })),
     yoyUnit,
     () => { yoyUnit = unitSel.value as YoyUnit; renderYoyControls(); loadYoy(); },
   );
-  controls.append(mutedLabel('Compare'), unitSel);
-  YOY_UNITS[yoyUnit].controls(controls);
+  // The unit selector picks WHICH strip to show, so it sits in its own box
+  // beside the strip rather than at the head of it — leaving `yoy-controls`
+  // holding exactly the unit's own value pickers, in the order it named them.
+  emptyEl('yoy-unit').append(mutedLabel('Compare'), unitSel);
+  YOY_UNITS[yoyUnit].controls(emptyEl('yoy-controls'));
 }
 
 /** Turn the current value pickers into the /api/across-years call. */
 function yoyUrl(): string {
-  const vals = pickerValues('yoy-controls').slice(1);   // [0] is the unit selector
-  return api('across-years', { unit: yoyUnit, ...YOY_UNITS[yoyUnit].params(vals) });
+  return api('across-years', {
+    unit: yoyUnit,
+    ...YOY_UNITS[yoyUnit].params(pickerValues('yoy-controls')),
+  });
 }
 
 async function loadYoy(): Promise<void> {
