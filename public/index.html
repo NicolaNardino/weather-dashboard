@@ -31,12 +31,9 @@
   <!-- Stat cards — rendered from STAT_CARDS in app.ts. -->
   <div class="row g-3 mb-3" id="stat-cards"></div>
 
-  <!-- Chart cards — rendered from CHART_META in app.ts. -->
-  <div class="row g-3 mb-3" id="chart-cards"></div>
-
-  <!-- Data table — the well is rendered by renderTableCard, its header cells
-       from TABLE_COLUMNS, both in app.ts. -->
-  <div id="data-table"></div>
+  <!-- The dashboard view: its chart cards (from CHART_META) and the data table
+       under them, both built inside here by renderView in app.ts. -->
+  <div id="dashboard"></div>
 
 </div>
 
@@ -49,11 +46,8 @@
     <span id="cmp-status" class="text-warning small"></span>
   </div>
 
-  <!-- Compare chart cards — rendered from COMPARE_META in app.ts. -->
-  <div class="row g-3 mb-3" id="cmp-chart-cards"></div>
-
-  <!-- Difference summary -->
-  <div id="cmp-summary"></div>
+  <!-- Chart cards (from COMPARE_META) and the difference summary under them. -->
+  <div id="cmp"></div>
 </div>
 
 <!-- Across-years view (hidden until toggled) — same period compared across years -->
@@ -64,11 +58,9 @@
     <span id="yoy-status" class="text-warning small"></span>
   </div>
 
-  <!-- One line per year, aligned on the same axis — rendered from YOY_METRICS. -->
-  <div class="row g-3 mb-3" id="yoy-chart-cards"></div>
-
-  <!-- Per-year averages, one column per year -->
-  <div id="yoy-summary"></div>
+  <!-- One line per year, aligned on the same axis (from YOY_METRICS), over the
+       per-year averages table, one column per year. -->
+  <div id="yoy"></div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
