@@ -491,6 +491,24 @@ interface ControlStrip {
 type Picker = (onChange: () => void) => HTMLElement;
 
 /**
+ * A dispatch table bound to the element its strip lives in: `render` fills that
+ * element with the named entry's pickers, and `params` reads whatever those
+ * pickers now hold back into that entry's query.
+ *
+ * Each of the two tables below is driven from two places — one that writes the
+ * strip and one that reads it — and all four named the container themselves, so
+ * the element a strip was rendered into and the one it was read back from were
+ * separate literals that had to agree. That is the same pair `view()` already
+ * stopped spelling out for a view's chart and table containers.
+ */
+function stripsIn<K extends string>(id: string, table: Record<K, ControlStrip>) {
+  return {
+    render: (key: K): void => table[key].controls(emptyEl(id)),
+    params: (key: K): Params => table[key].params(pickerValues(id)),
+  };
+}
+
+/**
  * A control strip whose pickers ARE its query params: one ordered list of
  * `[param name, picker]` pairs drives both halves — rendering the strip, and
  * reading it back into the call.
@@ -594,6 +612,9 @@ const PERIODS = {
 
 type Period = keyof typeof PERIODS;
 
+/** The dashboard's own control strip — the navbar row beside the period tabs. */
+const PERIOD_STRIP = stripsIn('controls', PERIODS);
+
 // --- State ---
 let period: Period = 'week';
 /** Every date the data holds, ascending — the pool every picker draws from. */
@@ -629,7 +650,7 @@ function renderPeriodTabs(): void {
 
 // --- Controls ---
 function renderControls(): void {
-  PERIODS[period].controls(emptyEl('controls'));
+  PERIOD_STRIP.render(period);
 }
 
 function yearSelect(onChange: () => void): HTMLSelectElement {
@@ -673,7 +694,7 @@ async function reloadDates(): Promise<void> {
 async function load(): Promise<void> {
   let data: { rows: WeatherRow[]; stats: Stats };
   try {
-    const url = api(period, PERIODS[period].params(pickerValues('controls')));
+    const url = api(period, PERIOD_STRIP.params(period));
     data = await fetchJson<{ rows: WeatherRow[]; stats: Stats }>(url);
   } catch {
     // A period the server has no data for (the day route 404s) — blank the
@@ -1121,9 +1142,12 @@ function renderDeltaTable<T>(
 // `classList.toggle` lines, two button syncs, two `if (v === …)` loads and two
 // click handlers) that all had to name the same view.
 const OVERLAYS = [
-  { name: 'compare', btn: el('btn-compare'), show: () => loadCompare() },
-  { name: 'yoy', btn: el('btn-yoy'), show: () => { renderYoyControls(); loadYoy(); } },
+  { name: 'compare', show: () => loadCompare() },
+  { name: 'yoy', show: () => { renderYoyControls(); loadYoy(); } },
 ] as const;
+
+/** An overlay's navbar button — named after the overlay, as its view already is. */
+const overlayBtn = (name: string) => el(`btn-${name}`);
 
 type ViewName = 'dashboard' | (typeof OVERLAYS)[number]['name'];
 let currentView: ViewName = 'dashboard';
@@ -1137,14 +1161,15 @@ function showView(v: ViewName): void {
   for (const o of OVERLAYS) {
     const on = o.name === v;
     el(`${o.name}-view`).classList.toggle('d-none', !on);
-    o.btn.classList.toggle('active', on);
+    overlayBtn(o.name).classList.toggle('active', on);
     if (on) o.show();
   }
 }
 
 // Each overlay button toggles its own view, falling back to the dashboard.
 for (const o of OVERLAYS) {
-  o.btn.addEventListener('click', () => showView(currentView === o.name ? 'dashboard' : o.name));
+  overlayBtn(o.name).addEventListener('click', () =>
+    showView(currentView === o.name ? 'dashboard' : o.name));
 }
 
 /**
@@ -1280,6 +1305,9 @@ const YOY_UNITS = {
 
 type YoyUnit = keyof typeof YOY_UNITS;
 
+/** The Across-Years view's value pickers — the unit selector sits beside them. */
+const YOY_STRIP = stripsIn('yoy-controls', YOY_UNITS);
+
 // A distinct, cycled colour per year across all the charts.
 const YEAR_COLORS = ['#38bdf8', '#fb923c', '#4ade80', '#f472b6', '#facc15', '#a78bfa'];
 const yearColor = (i: number) => YEAR_COLORS[i % YEAR_COLORS.length];
@@ -1336,15 +1364,12 @@ function renderYoyControls(): void {
   // beside the strip rather than at the head of it — leaving `yoy-controls`
   // holding exactly the unit's own value pickers, in the order it named them.
   emptyEl('yoy-unit').append(mutedLabel('Compare'), unitSel);
-  YOY_UNITS[yoyUnit].controls(emptyEl('yoy-controls'));
+  YOY_STRIP.render(yoyUnit);
 }
 
 /** Turn the current value pickers into the /api/across-years call. */
 function yoyUrl(): string {
-  return api('across-years', {
-    unit: yoyUnit,
-    ...YOY_UNITS[yoyUnit].params(pickerValues('yoy-controls')),
-  });
+  return api('across-years', { unit: yoyUnit, ...YOY_STRIP.params(yoyUnit) });
 }
 
 async function loadYoy(): Promise<void> {
