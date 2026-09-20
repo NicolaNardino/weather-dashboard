@@ -396,8 +396,15 @@ function mkSelect(
   return sel;
 }
 
-/** Value/label pairs where both are the same string (dates, years). */
-const asOptions = (values: string[]) => values.map(v => ({ value: v, label: v }));
+/**
+ * A picker over a pool of plain strings, defaulting to the newest — every date
+ * the data holds, or every year it spans. Both pickers below spelled the same
+ * value-is-its-own-label mapping and the same `last(pool)` default out, and one
+ * of them then restated its empty-pool fallback a second time as the default it
+ * had just put in the list.
+ */
+const poolSelect = (pool: string[], onChange: () => void, selected = last(pool)) =>
+  mkSelect(pool.map(v => ({ value: v, label: v })), selected, onChange);
 
 const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
@@ -543,7 +550,7 @@ function paramPickers(
  * reached the pickers by two routes.
  */
 const dateSelect = (onChange: () => void, selected = last(allDates)) =>
-  mkSelect(asOptions(allDates), selected, onChange);
+  poolSelect(allDates, onChange, selected);
 
 /**
  * One entry per period selector. Each key is also the `/api/<key>` route that
@@ -656,11 +663,7 @@ function renderControls(): void {
 function yearSelect(onChange: () => void): HTMLSelectElement {
   const thisYear = String(new Date().getFullYear());
   const years = [...new Set(allDates.map(d => d.slice(0, 4)))];
-  return mkSelect(
-    asOptions(years.length ? years : [thisYear]),
-    last(years) || thisYear,
-    onChange,
-  );
+  return poolSelect(years.length ? years : [thisYear], onChange);
 }
 
 // Reference date = latest date that actually has data (falls back to today
