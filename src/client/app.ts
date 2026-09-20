@@ -396,8 +396,15 @@ function mkSelect(
   return sel;
 }
 
-/** Value/label pairs where both are the same string (dates, years). */
-const asOptions = (values: string[]) => values.map(v => ({ value: v, label: v }));
+/**
+ * A picker over a pool of plain strings, defaulting to the newest — every date
+ * the data holds, or every year it spans. Both pickers below spelled the same
+ * value-is-its-own-label mapping and the same `last(pool)` default out, and one
+ * of them then restated its empty-pool fallback a second time as the default it
+ * had just put in the list.
+ */
+const poolSelect = (pool: string[], onChange: () => void, selected = last(pool)) =>
+  mkSelect(pool.map(v => ({ value: v, label: v })), selected, onChange);
 
 const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
@@ -487,8 +494,12 @@ interface ControlStrip {
   params: (vals: string[]) => Params;
 }
 
-/** A control a strip is built from: it rebuilds itself around `onChange`. */
-type Picker = (onChange: () => void) => HTMLElement;
+/**
+ * A control a strip is built from: it rebuilds itself around `onChange`. A
+ * picker may contribute more than one node — the Range period's two date
+ * pickers each sit behind a caption saying which end of the window it is.
+ */
+type Picker = (onChange: () => void) => HTMLElement | HTMLElement[];
 
 /**
  * A dispatch table bound to the element its strip lives in: `render` fills that
@@ -513,22 +524,31 @@ function stripsIn<K extends string>(id: string, table: Record<K, ControlStrip>) 
  * `[param name, picker]` pairs drives both halves — rendering the strip, and
  * reading it back into the call.
  *
- * Seven of the eight period/unit entries below spelled those halves out
- * separately: `controls` appended the pickers in one order and `params` read
- * them back at hand-written `v[0]` / `v[1]` positions, so the two had to agree
- * with nothing checking that they did. Adding a picker meant editing both, and
- * inserting one anywhere but the end silently re-labelled every param after it.
+ * Every period/unit entry below spelled those halves out separately: `controls`
+ * appended the pickers in one order and `params` read them back at hand-written
+ * `v[0]` / `v[1]` positions, so the two had to agree with nothing checking that
+ * they did. Adding a picker meant editing both, and inserting one anywhere but
+ * the end silently re-labelled every param after it.
  */
 function paramPickers(
   onChange: () => void,
   named: [string, Picker][],
 ): Omit<ControlStrip, 'label'> {
   return {
-    controls: (el: HTMLElement) => el.append(...named.map(([, picker]) => picker(onChange))),
+    controls: (el: HTMLElement) => el.append(...named.flatMap(([, picker]) => picker(onChange))),
     params: (vals: string[]): Params =>
       Object.fromEntries(named.map(([name], i) => [name, vals[i]])),
   };
 }
+
+/**
+ * A picker with a dimmed caption in front of it. `pickerValues` reads a strip's
+ * `<select>`s in document order, so a caption rides along with the picker it
+ * names instead of being appended beside it.
+ */
+const captioned =
+  (text: string, picker: (onChange: () => void) => HTMLElement): Picker =>
+  onChange => [mutedLabel(text), picker(onChange)];
 
 /**
  * A picker over every date the data holds, defaulting to the newest — the Day
@@ -543,7 +563,25 @@ function paramPickers(
  * reached the pickers by two routes.
  */
 const dateSelect = (onChange: () => void, selected = last(allDates)) =>
-  mkSelect(asOptions(allDates), selected, onChange);
+  poolSelect(allDates, onChange, selected);
+
+/** Where the Range period opens: the last ~30 available days, a sensible window. */
+const rangeStart = () => allDates[Math.max(0, allDates.length - 30)];
+
+/**
+ * The Range period's window: two date pickers populated ONLY from dates that
+ * exist in the data, so the user can never select a window outside the recorded
+ * range.
+ *
+ * Named out here so the entry below — the one strip that also carries a control
+ * which is not a param — can still say its two params once, in the order the
+ * pickers appear, rather than appending them itself and reading them back at
+ * hand-written `v[0]` / `v[1]` positions.
+ */
+const RANGE_PICKERS = paramPickers(load, [
+  ['from', captioned('From', onChange => dateSelect(onChange, rangeStart()))],
+  ['to', captioned('To', dateSelect)],
+]);
 
 /**
  * One entry per period selector. Each key is also the `/api/<key>` route that
@@ -574,36 +612,31 @@ const PERIODS = {
 
   range: {
     label: 'Range',
-    // Two date pickers populated ONLY from dates that exist in the data,
-    // so the user can never select a window outside the recorded range.
-    // From defaults to the last ~30 available days for a sensible window.
     controls: el => {
-      const fromSel = dateSelect(load, allDates[Math.max(0, allDates.length - 30)]);
-      const toSel = dateSelect(load);
-
       // "All" checkbox — when checked, span the entire dataset and disable the
-      // From/To pickers since the window is no longer user-controlled. The
-      // strip is rebuilt from scratch here, so the flag starts off with it.
+      // window's pickers, since it is no longer user-controlled. The strip is
+      // rebuilt from scratch here, so the flag starts off with it.
       rangeAll = false;
       const allChk = mkEl('input', { type: 'checkbox', className: 'form-check-input mt-0' });
-      const allWrap = mkEl(
-        'label',
-        { className: 'text-muted small d-flex align-items-center gap-1 mb-0' },
-        [allChk, 'All'],
-      );
       allChk.addEventListener('change', () => {
         rangeAll = allChk.checked;
-        fromSel.disabled = rangeAll;
-        toSel.disabled = rangeAll;
+        for (const sel of Array.from(el.querySelectorAll('select'))) sel.disabled = rangeAll;
         load();
       });
-
-      el.append(allWrap, mutedLabel('From'), fromSel, mutedLabel('To'), toSel);
+      el.append(
+        mkEl(
+          'label',
+          { className: 'text-muted small d-flex align-items-center gap-1 mb-0' },
+          [allChk, 'All'],
+        ),
+      );
+      RANGE_PICKERS.controls(el);
     },
     params: v => {
+      const picked = RANGE_PICKERS.params(v) as { from?: string; to?: string };
       let [from, to] = rangeAll && allDates.length
         ? [allDates[0], last(allDates)]                  // whole dataset
-        : [v[0], v[1]];
+        : [picked.from, picked.to];
       if (from && to && from > to) [from, to] = [to, from]; // tolerate reversed picks
       return { from, to };
     },
@@ -656,11 +689,7 @@ function renderControls(): void {
 function yearSelect(onChange: () => void): HTMLSelectElement {
   const thisYear = String(new Date().getFullYear());
   const years = [...new Set(allDates.map(d => d.slice(0, 4)))];
-  return mkSelect(
-    asOptions(years.length ? years : [thisYear]),
-    last(years) || thisYear,
-    onChange,
-  );
+  return poolSelect(years.length ? years : [thisYear], onChange);
 }
 
 // Reference date = latest date that actually has data (falls back to today
