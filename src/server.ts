@@ -4,7 +4,8 @@ import { importFile } from './import';
 import {
   queryDay, queryWeek, queryMonth, queryYear, queryRange,
   queryAllDates, aggregateStats, getMeta, WeatherRow,
-  queryPublicRange, upsertPublic, PublicRow
+  queryPublicRange, upsertPublic, PublicRow,
+  queryYearWindow, alignByMonthDay
 } from './db';
 
 // Baar, Canton Zug, Switzerland — reference location for the public comparison.
@@ -149,6 +150,41 @@ app.get('/api/year', (req, res) => {
   if (!year) return res.status(400).json({ error: 'year required' });
   const rows = queryYear(+year);
   res.json({ rows, stats: aggregateStats(rows) });
+});
+
+// GET /api/yoy?a=2025&b=2026[&from=MM-DD&to=MM-DD]
+// Year-over-year: the same MM-DD window in two different years, aligned on
+// month-day so the two series share one x-axis. Stats are computed over the
+// days present in BOTH years, so the comparison is not skewed by a year that
+// simply has more recorded days in the window.
+app.get('/api/yoy', (req, res) => {
+  const { a, b, from, to } = req.query as { a?: string; b?: string; from?: string; to?: string };
+  if (!a || !b) return res.status(400).json({ error: 'a and b (years) required' });
+
+  const MD = /^\d{2}-\d{2}$/;
+  const fromMd = from ?? '01-01';
+  const toMd = to ?? '12-31';
+  if (!MD.test(fromMd) || !MD.test(toMd)) return res.status(400).json({ error: 'from/to must be MM-DD' });
+  if (fromMd > toMd) return res.status(400).json({ error: 'from must not be after to' });
+
+  const rowsA = queryYearWindow(+a, fromMd, toMd);
+  const rowsB = queryYearWindow(+b, fromMd, toMd);
+  const points = alignByMonthDay(rowsA, rowsB);
+
+  // Overlap only — both years have a row for that month-day.
+  const both = points.filter(p => p.a && p.b);
+  const overlapA = both.map(p => p.a as WeatherRow);
+  const overlapB = both.map(p => p.b as WeatherRow);
+
+  res.json({
+    yearA: +a, yearB: +b, from: fromMd, to: toMd,
+    points,
+    daysA: rowsA.length,
+    daysB: rowsB.length,
+    overlapDays: both.length,
+    statsA: aggregateStats(overlapA),
+    statsB: aggregateStats(overlapB),
+  });
 });
 
 // GET /api/range?from=YYYY-MM-DD&to=YYYY-MM-DD

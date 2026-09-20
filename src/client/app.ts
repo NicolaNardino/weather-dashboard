@@ -366,6 +366,7 @@ document.getElementById('btn-import')!.addEventListener('click', async () => {
     const resp = await fetch('/api/dates');
     allDates = await resp.json() as DateRow[];
     renderControls();
+    initYoyControls();
     await load();
     await refreshStatus();
   } catch (e) {
@@ -377,7 +378,23 @@ document.getElementById('btn-import')!.addEventListener('click', async () => {
 
 // --- Compare vs public service (Baar) ---
 const cmpCharts: Record<string, any> = {};
-let compareOn = false;
+
+// Three mutually exclusive top-level views. Kept in one switcher so adding a
+// view can't leave two of them visible at once.
+type View = 'dashboard' | 'compare' | 'yoy';
+let currentView: View = 'dashboard';
+
+function showView(v: View): void {
+  currentView = v;
+  const views: Record<View, string> = {
+    dashboard: 'dashboard-view', compare: 'compare-view', yoy: 'yoy-view',
+  };
+  (Object.keys(views) as View[]).forEach(k => {
+    document.getElementById(views[k])!.classList.toggle('d-none', k !== v);
+  });
+  document.getElementById('btn-compare')!.classList.toggle('active', v === 'compare');
+  document.getElementById('btn-yoy')!.classList.toggle('active', v === 'yoy');
+}
 
 function mkCmpChart(id: string, type: string, data: any, extraOpts: any = {}): void {
   const ctx = document.getElementById(id);
@@ -386,12 +403,9 @@ function mkCmpChart(id: string, type: string, data: any, extraOpts: any = {}): v
 }
 
 document.getElementById('btn-compare')!.addEventListener('click', () => {
-  compareOn = !compareOn;
-  const btn = document.getElementById('btn-compare')!;
-  document.getElementById('dashboard-view')!.classList.toggle('d-none', compareOn);
-  document.getElementById('compare-view')!.classList.toggle('d-none', !compareOn);
-  btn.classList.toggle('active', compareOn);
-  if (compareOn) loadCompare();
+  const on = currentView !== 'compare';
+  showView(on ? 'compare' : 'dashboard');
+  if (on) loadCompare();
 });
 
 async function loadCompare(): Promise<void> {
@@ -467,11 +481,177 @@ function renderCompareSummary(pub: Map<string, PublicRow>): void {
   }).join('');
 }
 
+// --- Year over year ---
+
+interface YoYPoint { md: string; a: WeatherRow | null; b: WeatherRow | null; }
+
+interface YoYResponse {
+  yearA: number; yearB: number; from: string; to: string;
+  points: YoYPoint[];
+  daysA: number; daysB: number; overlapDays: number;
+  statsA: Stats | null; statsB: Stats | null;
+}
+
+const yoyCharts: Record<string, any> = {};
+
+function mkYoyChart(id: string, type: string, data: any, extraOpts: any = {}): void {
+  const ctx = document.getElementById(id);
+  if (yoyCharts[id]) yoyCharts[id].destroy();
+  yoyCharts[id] = new Chart(ctx, { type, data, options: mergeOpts(extraOpts) });
+}
+
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+// Populate the two year pickers and the month-scope picker. Defaults to the
+// two most recent years present in the data — the pair most likely wanted.
+function initYoyControls(): void {
+  const years = [...new Set(allDates.map(d => d.date.slice(0, 4)))].sort();
+  const aSel = document.getElementById('yoy-a') as HTMLSelectElement;
+  const bSel = document.getElementById('yoy-b') as HTMLSelectElement;
+  const scope = document.getElementById('yoy-scope') as HTMLSelectElement;
+
+  [aSel, bSel].forEach(sel => {
+    sel.innerHTML = '';
+    years.forEach(y => {
+      const o = document.createElement('option');
+      o.value = y; o.textContent = y;
+      sel.appendChild(o);
+    });
+  });
+  if (years.length) {
+    bSel.value = years[years.length - 1];
+    aSel.value = years[Math.max(0, years.length - 2)];
+  }
+
+  scope.innerHTML = '';
+  const all = document.createElement('option');
+  all.value = ''; all.textContent = 'Full year';
+  scope.appendChild(all);
+  MONTHS.forEach((n, i) => {
+    const o = document.createElement('option');
+    o.value = String(i + 1); o.textContent = n;
+    scope.appendChild(o);
+  });
+
+  [aSel, bSel, scope].forEach(sel => sel.addEventListener('change', loadYoY));
+}
+
+document.getElementById('btn-yoy')!.addEventListener('click', () => {
+  const on = currentView !== 'yoy';
+  showView(on ? 'yoy' : 'dashboard');
+  if (on) loadYoY();
+});
+
+async function loadYoY(): Promise<void> {
+  const status = document.getElementById('yoy-status')!;
+  const a = (document.getElementById('yoy-a') as HTMLSelectElement).value;
+  const b = (document.getElementById('yoy-b') as HTMLSelectElement).value;
+  const month = (document.getElementById('yoy-scope') as HTMLSelectElement).value;
+
+  if (!a || !b) { status.textContent = 'No data loaded.'; return; }
+  if (a === b) { status.textContent = 'Pick two different years.'; return; }
+
+  // Month scope → an MM-DD window; 31 is a safe upper bound since the filter
+  // is a string comparison against dates that actually exist.
+  const q = month
+    ? `&from=${String(month).padStart(2, '0')}-01&to=${String(month).padStart(2, '0')}-31`
+    : '';
+
+  status.textContent = 'Loading…';
+  let data: YoYResponse;
+  try {
+    const r = await fetch(`/api/yoy?a=${a}&b=${b}${q}`);
+    if (!r.ok) throw new Error((await r.json()).error || r.statusText);
+    data = await r.json() as YoYResponse;
+  } catch (e) {
+    status.textContent = `Could not load: ${(e as Error).message}`;
+    return;
+  }
+
+  if (!data.overlapDays) {
+    status.textContent = `No overlapping days — ${a} has ${data.daysA}, ${b} has ${data.daysB} in this window.`;
+  } else {
+    status.textContent = '';
+  }
+  document.getElementById('yoy-overlap')!.textContent =
+    `${data.overlapDays} shared day${data.overlapDays === 1 ? '' : 's'} · ${a}: ${data.daysA}, ${b}: ${data.daysB}`;
+
+  const lbl = data.points.map(p => p.md);
+  const serie = (side: 'a' | 'b', key: keyof WeatherRow) =>
+    data.points.map(p => (p[side] ? (p[side] as WeatherRow)[key] : null));
+
+  // spanGaps:false so a day missing from one year shows as a break in the
+  // line rather than being bridged over.
+  const pair = (key: keyof WeatherRow) => ({
+    labels: lbl,
+    datasets: [
+      { label: String(data.yearA), data: serie('a', key), borderColor: '#94a3b8', backgroundColor: 'transparent', pointRadius: 1, tension: 0.3, spanGaps: false, borderDash: [5, 3] },
+      { label: String(data.yearB), data: serie('b', key), borderColor: '#38bdf8', backgroundColor: 'transparent', pointRadius: 1, tension: 0.3, spanGaps: false },
+    ],
+  });
+
+  mkYoyChart('yoy-temp-high', 'line', pair('temp_high'));
+  mkYoyChart('yoy-temp-avg',  'line', pair('temp_avg'));
+  mkYoyChart('yoy-temp-low',  'line', pair('temp_low'));
+  mkYoyChart('yoy-hum',       'line', pair('hum_avg'),
+    { scales: { ...CHART_DEFAULTS.scales, y: { ...CHART_DEFAULTS.scales.y, min: 0, max: 100 } } });
+  mkYoyChart('yoy-wind',      'line', pair('wind_high'));
+  mkYoyChart('yoy-precip', 'bar', {
+    labels: lbl,
+    datasets: [
+      { label: String(data.yearA), data: serie('a', 'precip'), backgroundColor: '#94a3b899' },
+      { label: String(data.yearB), data: serie('b', 'precip'), backgroundColor: '#38bdf899' },
+    ],
+  });
+
+  renderYoYSummary(data);
+}
+
+function renderYoYSummary(data: YoYResponse): void {
+  setText('yoy-th-a', String(data.yearA));
+  setText('yoy-th-b', String(data.yearB));
+
+  const body = document.getElementById('yoy-summary-body')!;
+  const { statsA, statsB } = data;
+  if (!statsA || !statsB) {
+    body.innerHTML = '<tr><td colspan="4" class="text-muted">No days shared by both years in this window.</td></tr>';
+    return;
+  }
+
+  // Stats come from the overlapping days only, so A and B cover the same
+  // calendar days and the delta is a like-for-like change.
+  const rows: [string, (s: Stats) => number, string][] = [
+    ['Temp Avg',      s => s.temp.avg,          '°C'],
+    ['Temp High',     s => s.temp.high,         '°C'],
+    ['Temp Low',      s => s.temp.low,          '°C'],
+    ['Dew Avg',       s => s.dew.avg,           '°C'],
+    ['Humidity Avg',  s => s.humidity.avg,      '%'],
+    ['Wind Max',      s => s.wind.high,         'km/h'],
+    ['Pressure Avg',  s => s.pressure.avg,      'hPa'],
+    ['Precip Total',  s => s.precip.total,      'mm'],
+    ['Rainy Days',    s => s.precip.rainy_days, ''],
+  ];
+
+  body.innerHTML = rows.map(([name, pick, unit]) => {
+    const va = pick(statsA);
+    const vb = pick(statsB);
+    const diff = vb - va;
+    // Warmer/wetter/windier reads red, the other direction blue — same
+    // convention as the Compare view.
+    const cls = diff > 0 ? 'text-danger' : diff < 0 ? 'text-info' : '';
+    const sign = diff > 0 ? '+' : '';
+    const u = unit ? ` ${unit}` : '';
+    return `<tr><td>${name}</td><td>${va}${u}</td><td>${vb}${u}</td>` +
+           `<td class="${cls}">${sign}${Math.round(diff * 10) / 10}${u}</td></tr>`;
+  }).join('');
+}
+
 // --- Init ---
 (async () => {
   const resp = await fetch('/api/dates');
   allDates = await resp.json() as DateRow[];
   renderControls();
+  initYoyControls();
   await load();
   await refreshStatus();
 })();

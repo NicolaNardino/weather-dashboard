@@ -178,3 +178,32 @@ export function aggregateStats(rows: WeatherRow[]) {
     },
   };
 }
+
+// --- Year-over-year ---
+
+// Rows of one calendar year restricted to a MM-DD window (inclusive). The
+// window is compared as text, which works because MM-DD is zero-padded and
+// sorts chronologically; a window that wraps the new year is not supported.
+export function queryYearWindow(year: number, fromMd: string, toMd: string): WeatherRow[] {
+  return queryYear(year).filter(r => {
+    const md = r.date.slice(5);
+    return md >= fromMd && md <= toMd;
+  });
+}
+
+export interface YoYPoint {
+  md: string;                 // MM-DD — the shared x-axis key
+  a: WeatherRow | null;
+  b: WeatherRow | null;
+}
+
+// Align two years on month-day rather than on row index, so a missing day in
+// one year (or Feb 29 existing in only one of them) leaves a gap instead of
+// shifting every later point by one.
+export function alignByMonthDay(rowsA: WeatherRow[], rowsB: WeatherRow[]): YoYPoint[] {
+  const byMd = (rows: WeatherRow[]) => new Map(rows.map(r => [r.date.slice(5), r]));
+  const a = byMd(rowsA);
+  const b = byMd(rowsB);
+  const mds = [...new Set([...a.keys(), ...b.keys()])].sort();
+  return mds.map(md => ({ md, a: a.get(md) ?? null, b: b.get(md) ?? null }));
+}

@@ -19,6 +19,7 @@
     <button class="btn btn-outline-secondary" data-period="range">Range</button>
   </div>
   <button class="btn btn-sm btn-outline-warning ms-3" id="btn-compare" title="Compare my data against a public weather service">&#127757; Compare vs Baar</button>
+  <button class="btn btn-sm btn-outline-success" id="btn-yoy" title="Compare the same dates across two years">&#128197; Year over Year</button>
   <div id="controls" class="d-flex gap-2 align-items-center ms-auto"></div>
   <span id="last-import" class="text-muted small ms-2" title="Last time weather_data.txt was imported"></span>
   <button class="btn btn-sm btn-outline-info ms-2" id="btn-import" title="Re-import weather_data.txt">&#8635; Import</button>
@@ -208,6 +209,87 @@
             <tr><th>Metric</th><th>My avg</th><th>Baar avg</th><th>Difference</th></tr>
           </thead>
           <tbody id="cmp-summary-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- Year-over-year view (hidden until toggled) -->
+<div id="yoy-view" class="container-fluid px-4 py-3 d-none">
+  <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
+    <h5 class="mb-0">Year over Year</h5>
+    <div class="d-flex gap-2 align-items-center">
+      <select id="yoy-a" class="form-select form-select-sm w-auto"></select>
+      <span class="text-muted">vs</span>
+      <select id="yoy-b" class="form-select form-select-sm w-auto"></select>
+      <select id="yoy-scope" class="form-select form-select-sm w-auto ms-2"></select>
+    </div>
+    <span id="yoy-overlap" class="text-muted small"></span>
+    <span id="yoy-status" class="text-warning small"></span>
+  </div>
+
+  <div class="row g-3 mb-3">
+    <div class="col-12 col-xl-6">
+      <div class="card bg-secondary-subtle border-0">
+        <div class="card-body">
+          <h6 class="card-title text-muted">Temperature High (°C)</h6>
+          <canvas id="yoy-temp-high" height="110"></canvas>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-xl-6">
+      <div class="card bg-secondary-subtle border-0">
+        <div class="card-body">
+          <h6 class="card-title text-muted">Temperature Avg (°C)</h6>
+          <canvas id="yoy-temp-avg" height="110"></canvas>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-xl-6">
+      <div class="card bg-secondary-subtle border-0">
+        <div class="card-body">
+          <h6 class="card-title text-muted">Temperature Low (°C)</h6>
+          <canvas id="yoy-temp-low" height="110"></canvas>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-xl-6">
+      <div class="card bg-secondary-subtle border-0">
+        <div class="card-body">
+          <h6 class="card-title text-muted">Precipitation (mm)</h6>
+          <canvas id="yoy-precip" height="110"></canvas>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-xl-6">
+      <div class="card bg-secondary-subtle border-0">
+        <div class="card-body">
+          <h6 class="card-title text-muted">Humidity Avg (%)</h6>
+          <canvas id="yoy-hum" height="110"></canvas>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-xl-6">
+      <div class="card bg-secondary-subtle border-0">
+        <div class="card-body">
+          <h6 class="card-title text-muted">Wind Max (km/h)</h6>
+          <canvas id="yoy-wind" height="110"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Difference summary (overlapping days only) -->
+  <div class="card bg-secondary-subtle border-0 mb-3">
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-dark table-sm mb-0 small" id="yoy-summary">
+          <thead>
+            <tr><th>Metric</th><th id="yoy-th-a">Year A</th><th id="yoy-th-b">Year B</th><th>Change</th></tr>
+          </thead>
+          <tbody id="yoy-summary-body"></tbody>
         </table>
       </div>
     </div>

@@ -25,6 +25,11 @@ server to run.
 - **Compare vs. a public station** — overlay your readings against
   [Open-Meteo](https://open-meteo.com/) data for a reference location
   (Baar, CH by default) with a per-metric difference summary.
+- **Year over year** — overlay the same calendar dates from two different
+  years, for the whole year or a single month. Series are aligned on
+  month-day (not row index), so a missing day or a leap-year Feb 29 leaves a
+  gap instead of shifting the rest of the curve; the change summary is
+  computed over the days both years actually share.
 - **One-click re-import** — drop in a fresh station export and hit **↻ Import**;
   ingestion is idempotent, so re-importing never duplicates rows.
 
@@ -86,6 +91,7 @@ The front end is a thin client over these routes; each period route returns
 | `GET /api/year?year=` | A full year |
 | `GET /api/range?from=&to=` | Any inclusive date range |
 | `GET /api/compare?from=&to=` | Your data aligned with Open-Meteo for the reference location |
+| `GET /api/yoy?a=&b=[&from=MM-DD&to=MM-DD]` | Two years aligned on month-day, with stats over the shared days |
 | `GET /api/dates` | All available dates |
 | `GET /api/status` | Last import time + record count |
 | `POST /api/import` | Re-import `weather_data.txt` (idempotent) |
