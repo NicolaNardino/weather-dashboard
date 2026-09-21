@@ -589,24 +589,24 @@ const RANGE_PICKERS = paramPickers(load, [
  * sides — so the endpoint comes from the entry's own key rather than a `path`
  * field restating it, the way `YOY_UNITS` below already takes its `unit` param.
  */
+/**
+ * A period picked within a year: the year selector, then the period's own
+ * numbered one. Week and Month are both exactly that, and each spelled the
+ * pair out — so the year picker that has to come first appeared twice, in a
+ * list whose order silently names the params.
+ */
+const yearScoped = (name: string, picker: Picker) =>
+  paramPickers(load, [
+    ['year', yearSelect],
+    [name, picker],
+  ]);
+
 const PERIODS = {
   day: { label: 'Day', ...paramPickers(load, [['date', dateSelect]]) },
 
-  week: {
-    label: 'Week',
-    ...paramPickers(load, [
-      ['year', yearSelect],
-      ['week', weekSelect],
-    ]),
-  },
+  week: { label: 'Week', ...yearScoped('week', weekSelect) },
 
-  month: {
-    label: 'Month',
-    ...paramPickers(load, [
-      ['year', yearSelect],
-      ['month', monthSelect],
-    ]),
-  },
+  month: { label: 'Month', ...yearScoped('month', monthSelect) },
 
   year: { label: 'Year', ...paramPickers(load, [['year', yearSelect]]) },
 
