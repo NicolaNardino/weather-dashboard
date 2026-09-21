@@ -39,7 +39,7 @@ export type PublicRow = { date: string } & Record<PublicField, number | null>;
 
 let _db: DatabaseSync | null = null;
 
-export function getDb(): DatabaseSync {
+function getDb(): DatabaseSync {
   if (!_db) {
     _db = new DatabaseSync(DB_PATH);
     _db.exec(`PRAGMA journal_mode=WAL`);

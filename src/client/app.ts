@@ -282,7 +282,8 @@ const pickerValues = (id: string): string[] =>
 const cell = (tag: 'td' | 'th', content: string | number, cls = ''): string =>
   `<${tag}${cls ? ` class="${cls}"` : ''}>${content}</${tag}>`;
 const td = (content: string | number, cls = '') => cell('td', content, cls);
-const th = (content: string | number, cls = '') => cell('th', content, cls);
+// Headers carry no class anywhere on the page, so `th` doesn't offer one.
+const th = (content: string | number) => cell('th', content);
 const tr = (cells: string[]) => `<tr>${cells.join('')}</tr>`;
 
 /**
