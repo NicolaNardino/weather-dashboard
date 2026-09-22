@@ -205,7 +205,12 @@ app.get('/api/compare', async (req, res) => {
 // Each year is returned with its rows and aggregated stats; years with no data
 // for that period are omitted, so with one year of data it degrades to one.
 app.get('/api/across-years', (req, res) => {
-  const spec = YOY_UNITS[String(req.query.unit ?? '')];
+  // Name the unit once: the same string picks the spec that answers the
+  // request and labels the reply. Echoing `req.query.unit` back instead
+  // returned whatever was asked for — an array, for a repeated `?unit=` —
+  // where the lookup above had already settled on one key.
+  const unit = String(req.query.unit ?? '');
+  const spec = YOY_UNITS[unit];
   if (!spec) return res.status(400).json({ error: 'unit must be day, week or month' });
 
   const q = requireQuery(req, res, spec.needs, Number);
@@ -216,26 +221,33 @@ app.get('/api/across-years', (req, res) => {
     .filter(x => x.rows.length)
     .map(x => ({ ...x, stats: aggregateStats(x.rows) }));
 
-  res.json({ unit: req.query.unit, label: spec.label(q), years });
+  res.json({ unit, label: spec.label(q), years });
 });
 
-// GET /api/day?date=YYYY-MM-DD — the one period route that can 404
-app.get('/api/day', rowsRoute(['date'], q => queryDayRows(q.date), { emptyIs404: true }));
+/**
+ * The five period routes, keyed by the period each serves — which is also the
+ * path it answers on (`/api/<period>`), the same way the front-end's PERIODS
+ * table already names its endpoint after its own key. Registered by hand they
+ * were five `app.get` calls of one shape, each naming its period twice a line
+ * apart: once as a literal in the path, once in the params it reads.
+ *
+ *   day    ?date=YYYY-MM-DD                — the one route that can 404
+ *   week   ?year=2026&week=14
+ *   month  ?year=2026&month=4
+ *   year   ?year=2026
+ *   range  ?from=YYYY-MM-DD&to=YYYY-MM-DD
+ */
+const PERIOD_ROUTES = {
+  day: rowsRoute(['date'], q => queryDayRows(q.date), { emptyIs404: true }),
+  week: rowsRoute(['year', 'week'], q => queryWeek(q.year, q.week), { read: Number }),
+  month: rowsRoute(['year', 'month'], q => queryMonth(q.year, q.month), { read: Number }),
+  year: rowsRoute(['year'], q => queryYear(q.year), { read: Number }),
+  range: rowsRoute(['from', 'to'], q => queryRange(q.from, q.to)),
+};
 
-// GET /api/week?year=2026&week=14
-app.get('/api/week', rowsRoute(['year', 'week'], q => queryWeek(q.year, q.week), { read: Number }));
-
-// GET /api/month?year=2026&month=4
-app.get(
-  '/api/month',
-  rowsRoute(['year', 'month'], q => queryMonth(q.year, q.month), { read: Number }),
-);
-
-// GET /api/year?year=2026
-app.get('/api/year', rowsRoute(['year'], q => queryYear(q.year), { read: Number }));
-
-// GET /api/range?from=YYYY-MM-DD&to=YYYY-MM-DD
-app.get('/api/range', rowsRoute(['from', 'to'], q => queryRange(q.from, q.to)));
+for (const [period, handler] of Object.entries(PERIOD_ROUTES)) {
+  app.get(`/api/${period}`, handler);
+}
 
 // POST /api/import — re-import weather_data.txt (idempotent)
 app.post('/api/import', (_req, res) => {
