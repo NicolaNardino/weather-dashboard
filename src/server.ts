@@ -211,7 +211,12 @@ app.get('/api/across-years', (req, res) => {
   // where the lookup above had already settled on one key.
   const unit = String(req.query.unit ?? '');
   const spec = YOY_UNITS[unit];
-  if (!spec) return res.status(400).json({ error: 'unit must be day, week or month' });
+  // The units the message offers come from the table that answers them, rather
+  // than a hand-kept copy of its keys that a fourth unit would leave behind.
+  if (!spec) {
+    const units = Object.keys(YOY_UNITS).join(', ');
+    return res.status(400).json({ error: `unit must be one of: ${units}` });
+  }
 
   const q = requireQuery(req, res, spec.needs, Number);
   if (!q) return;
