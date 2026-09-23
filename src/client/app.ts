@@ -263,15 +263,23 @@ function emptyEl(id: string): HTMLElement {
 }
 
 /**
+ * The `<select>` pickers inside a node, in document order. Two places ask a
+ * control strip for them — the readback below, and the Range period's "All"
+ * box, which disables the window it has taken over — and each spelled out the
+ * same `Array.from(…querySelectorAll('select'))`, so the one thing that makes a
+ * node a strip was asserted twice.
+ */
+const selectsIn = (node: ParentNode): HTMLSelectElement[] =>
+  Array.from(node.querySelectorAll('select'));
+
+/**
  * What a control strip's pickers currently hold, in document order — the one
  * thing a view needs from the controls it just rendered into `emptyEl`. The
- * dashboard and the year-over-year view each read their own strip back, and
- * each spelled the same `Array.from(…querySelectorAll('select'))` out; one of
+ * dashboard and the year-over-year view each read their own strip back; one of
  * them then took the values and the other passed the elements on, so the two
  * `url`/`query` builders took different arguments for the same job.
  */
-const pickerValues = (id: string): string[] =>
-  Array.from(el(id).querySelectorAll('select')).map(s => s.value);
+const pickerValues = (id: string): string[] => selectsIn(el(id)).map(s => s.value);
 
 /**
  * Table markup. Every table on the page — the dashboard's data table and the
@@ -515,6 +523,14 @@ type Picker = (onChange: () => void) => HTMLElement | HTMLElement[];
  */
 function stripsIn<K extends string>(id: string, table: Record<K, ControlStrip>) {
   return {
+    /**
+     * The table's entries as `{ value, label }` pairs — the shape a picker over
+     * them takes, and the one a tab strip that selects one reads. Both call
+     * sites rebuilt this themselves from `Object.keys(table)`, each restating
+     * the cast that a bare `Object.keys` loses the key type to, and each then
+     * reaching back into the table a second time for the entry's own label.
+     */
+    options: (Object.keys(table) as K[]).map(value => ({ value, label: table[value].label })),
     render: (key: K): void => table[key].controls(emptyEl(id)),
     params: (key: K): Params => table[key].params(pickerValues(id)),
   };
@@ -621,7 +637,7 @@ const PERIODS = {
       const allChk = mkEl('input', { type: 'checkbox', className: 'form-check-input mt-0' });
       allChk.addEventListener('change', () => {
         rangeAll = allChk.checked;
-        for (const sel of Array.from(el.querySelectorAll('select'))) sel.disabled = rangeAll;
+        for (const sel of selectsIn(el)) sel.disabled = rangeAll;
         load();
       });
       el.append(
@@ -669,12 +685,12 @@ let rangeAll = false;
 // offer a period the dashboard didn't implement, which the click handler had
 // to guard against.
 function renderPeriodTabs(): void {
-  renderButtonGroup('period-tabs', Object.keys(PERIODS) as Period[], {
-    label: key => PERIODS[key].label,
-    active: key => key === period,
-    each: (key, btn) => { btn.dataset.period = key; },   // the harness clicks these
-    onClick: key => {
-      period = key;
+  renderButtonGroup('period-tabs', PERIOD_STRIP.options, {
+    label: o => o.label,
+    active: o => o.value === period,
+    each: (o, btn) => { btn.dataset.period = o.value; },   // the harness clicks these
+    onClick: o => {
+      period = o.value;
       showView('dashboard');    // period tabs belong to the dashboard
       renderControls();
       load();
@@ -1385,11 +1401,11 @@ const YOY_VIEW = view<YoyMetric>('yoy', {
 
 /** Rebuild the unit selector and the value pickers it implies. */
 function renderYoyControls(): void {
-  const unitSel = mkSelect(
-    (Object.keys(YOY_UNITS) as YoyUnit[]).map(k => ({ value: k, label: YOY_UNITS[k].label })),
-    yoyUnit,
-    () => { yoyUnit = unitSel.value as YoyUnit; renderYoyControls(); loadYoy(); },
-  );
+  const unitSel = mkSelect(YOY_STRIP.options, yoyUnit, () => {
+    yoyUnit = unitSel.value as YoyUnit;
+    renderYoyControls();
+    loadYoy();
+  });
   // The unit selector picks WHICH strip to show, so it sits in its own box
   // beside the strip rather than at the head of it — leaving `yoy-controls`
   // holding exactly the unit's own value pickers, in the order it named them.
