@@ -871,6 +871,31 @@ function renderStats(s: Stats | undefined): void {
   }
 }
 
+/**
+ * The plot palette, named once. The three chart lists below — the dashboard's
+ * series, the two Compare sides and the year-over-year year colours — drew from
+ * the same ten hues and each wrote its own hex out, so seven of the ten
+ * appeared two or three times over and the page had no one place saying what
+ * the palette is. Recolouring a hue meant finding every list that used it and
+ * hoping none was missed.
+ *
+ * Named by hue rather than by role, because the same hue means different things
+ * in different views: `orange` is the wind series on the dashboard and Baar on
+ * the Compare view.
+ */
+const HUE = {
+  red: '#f87272',
+  orange: '#fb923c',
+  peach: '#fdba74',
+  amber: '#facc15',
+  green: '#4ade80',
+  blue: '#60a5fa',
+  sky: '#38bdf8',
+  indigo: '#818cf8',
+  violet: '#a78bfa',
+  pink: '#f472b6',
+} as const;
+
 // --- The dashboard charts ---
 // One entry per chart: its canvas (`chart-<key>`), its toggle-button label, its
 // grid cell, and how to turn a period's rows into datasets. The card markup,
@@ -896,22 +921,22 @@ const CHART_META: ChartSpec[] = [
   {
     key: 'temp', label: 'Temperature', col: 'col-12 col-xl-8', height: 110,
     series: [
-      { label: 'High', field: 'temp_high', color: '#f87272' },
-      { label: 'Avg',  field: 'temp_avg',  color: '#facc15' },
-      { label: 'Low',  field: 'temp_low',  color: '#60a5fa' },
-      { label: 'Dew',  field: 'dew_avg',   color: '#4ade80', extra: { borderDash: [4, 3] } },
+      { label: 'High', field: 'temp_high', color: HUE.red },
+      { label: 'Avg',  field: 'temp_avg',  color: HUE.amber },
+      { label: 'Low',  field: 'temp_low',  color: HUE.blue },
+      { label: 'Dew',  field: 'dew_avg',   color: HUE.green, extra: { borderDash: [4, 3] } },
     ],
   },
   {
     key: 'precip', label: 'Precipitation', type: 'bar', col: 'col-12 col-xl-4', height: 110,
-    series: [{ label: 'Precip', field: 'precip', color: '#60a5fa' }],
+    series: [{ label: 'Precip', field: 'precip', color: HUE.blue }],
   },
   {
     key: 'hum', label: 'Humidity',
     series: [
-      { label: 'High', field: 'hum_high', color: '#f87272', extra: { fill: true } },
-      { label: 'Avg',  field: 'hum_avg',  color: '#facc15' },
-      { label: 'Low',  field: 'hum_low',  color: '#60a5fa', extra: { fill: true } },
+      { label: 'High', field: 'hum_high', color: HUE.red, extra: { fill: true } },
+      { label: 'Avg',  field: 'hum_avg',  color: HUE.amber },
+      { label: 'Low',  field: 'hum_low',  color: HUE.blue, extra: { fill: true } },
     ],
     // Humidity is a percentage, so pin the axis rather than letting it autoscale.
     opts: { scales: { y: { min: 0, max: 100 } } },
@@ -919,15 +944,15 @@ const CHART_META: ChartSpec[] = [
   {
     key: 'pres', label: 'Pressure',
     series: [
-      { label: 'High', field: 'pres_high', color: '#a78bfa' },
-      { label: 'Low',  field: 'pres_low',  color: '#818cf8', extra: { fill: true } },
+      { label: 'High', field: 'pres_high', color: HUE.violet },
+      { label: 'Low',  field: 'pres_low',  color: HUE.indigo, extra: { fill: true } },
     ],
   },
   {
     key: 'wind', label: 'Wind',
     series: [
-      { label: 'High', field: 'wind_high', color: '#fb923c', extra: { fill: true } },
-      { label: 'Avg',  field: 'wind_avg',  color: '#fdba74' },
+      { label: 'High', field: 'wind_high', color: HUE.orange, extra: { fill: true } },
+      { label: 'Avg',  field: 'wind_avg',  color: HUE.peach },
     ],
   },
 ];
@@ -1276,9 +1301,9 @@ async function loadCompare(): Promise<void> {
   // Align public rows to my dates so both series share the same x-axis.
   const pub = new Map<string, PublicRow>(data.public.map(p => [p.date, p]));
   const sides: CompareSide[] = [
-    { name: 'Me', head: 'My avg', color: '#38bdf8', values: key => lastRows.map(r => r[key]) },
+    { name: 'Me', head: 'My avg', color: HUE.sky, values: key => lastRows.map(r => r[key]) },
     {
-      name: 'Baar', head: 'Baar avg', color: '#fb923c', extra: { borderDash: [5, 3] },
+      name: 'Baar', head: 'Baar avg', color: HUE.orange, extra: { borderDash: [5, 3] },
       values: key => lastRows.map(r => pub.get(r.date)?.[key] ?? null),
     },
   ];
@@ -1371,7 +1396,7 @@ type YoyUnit = keyof typeof YOY_UNITS;
 const YOY_STRIP = stripsIn('yoy-controls', YOY_UNITS);
 
 // A distinct, cycled colour per year across all the charts.
-const YEAR_COLORS = ['#38bdf8', '#fb923c', '#4ade80', '#f472b6', '#facc15', '#a78bfa'];
+const YEAR_COLORS = [HUE.sky, HUE.orange, HUE.green, HUE.pink, HUE.amber, HUE.violet];
 const yearColor = (i: number) => YEAR_COLORS[i % YEAR_COLORS.length];
 
 // One chart per metric; each draws one line (or bar) per year. `get` reads the
