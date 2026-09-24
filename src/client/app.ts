@@ -820,6 +820,22 @@ const CARD_BY_PREFIX: Record<string, StatCard> = Object.fromEntries(
 );
 
 /**
+ * The unit a measure is reported in, named once — on the stat card that already
+ * shows it. The three chart lists below each put that unit in their own
+ * headings and each wrote the string out again, so '°C' appeared five times
+ * across the file and 'km/h' four: recording a measure in different units
+ * meant finding every heading that happened to mention it.
+ *
+ * A list says which card it reads, the way YOY_SUMMARY already does — by
+ * `prefix` for the ones whose entries are derived measures, and by the entry's
+ * own key where that key IS the prefix.
+ */
+const unitOf = (prefix: string): string => CARD_BY_PREFIX[prefix].unit;
+
+/** The stat-card prefix behind a stored measure: `temp_high` → `temp`. */
+const prefixOf = (field: string): string => field.split('_')[0];
+
+/**
  * Where one stat's value is written. `renderStatCards` puts this id on the
  * element and `renderStats` finds it again by the same name, so the template
  * has to agree across the two — it was spelled out three times (the headline,
@@ -855,6 +871,31 @@ function renderStats(s: Stats | undefined): void {
   }
 }
 
+/**
+ * The plot palette, named once. The three chart lists below — the dashboard's
+ * series, the two Compare sides and the year-over-year year colours — drew from
+ * the same ten hues and each wrote its own hex out, so seven of the ten
+ * appeared two or three times over and the page had no one place saying what
+ * the palette is. Recolouring a hue meant finding every list that used it and
+ * hoping none was missed.
+ *
+ * Named by hue rather than by role, because the same hue means different things
+ * in different views: `orange` is the wind series on the dashboard and Baar on
+ * the Compare view.
+ */
+const HUE = {
+  red: '#f87272',
+  orange: '#fb923c',
+  peach: '#fdba74',
+  amber: '#facc15',
+  green: '#4ade80',
+  blue: '#60a5fa',
+  sky: '#38bdf8',
+  indigo: '#818cf8',
+  violet: '#a78bfa',
+  pink: '#f472b6',
+} as const;
+
 // --- The dashboard charts ---
 // One entry per chart: its canvas (`chart-<key>`), its toggle-button label, its
 // grid cell, and how to turn a period's rows into datasets. The card markup,
@@ -864,10 +905,9 @@ function renderStats(s: Stats | undefined): void {
 // removes its whole grid column so the rest reflow to fill the row; the choice
 // persists in localStorage.
 interface ChartSpec extends ChartSpecBase {
+  /** Also the stat-card prefix this chart's unit comes from. */
   key: string;
   label: string;
-  /** Appended to the label for the card heading: "Humidity (%)". */
-  unit: string;
   /** One entry per plotted series: which measure it reads, and how it looks.
       `col`/`height` come from ChartSpecBase: only the two charts that break the
       grid's default cell size give their own. */
@@ -879,40 +919,40 @@ type Measure = Exclude<keyof WeatherRow, 'date'>;
 
 const CHART_META: ChartSpec[] = [
   {
-    key: 'temp', label: 'Temperature', unit: '°C', col: 'col-12 col-xl-8', height: 110,
+    key: 'temp', label: 'Temperature', col: 'col-12 col-xl-8', height: 110,
     series: [
-      { label: 'High', field: 'temp_high', color: '#f87272' },
-      { label: 'Avg',  field: 'temp_avg',  color: '#facc15' },
-      { label: 'Low',  field: 'temp_low',  color: '#60a5fa' },
-      { label: 'Dew',  field: 'dew_avg',   color: '#4ade80', extra: { borderDash: [4, 3] } },
+      { label: 'High', field: 'temp_high', color: HUE.red },
+      { label: 'Avg',  field: 'temp_avg',  color: HUE.amber },
+      { label: 'Low',  field: 'temp_low',  color: HUE.blue },
+      { label: 'Dew',  field: 'dew_avg',   color: HUE.green, extra: { borderDash: [4, 3] } },
     ],
   },
   {
-    key: 'precip', label: 'Precipitation', unit: 'mm', type: 'bar', col: 'col-12 col-xl-4', height: 110,
-    series: [{ label: 'Precip', field: 'precip', color: '#60a5fa' }],
+    key: 'precip', label: 'Precipitation', type: 'bar', col: 'col-12 col-xl-4', height: 110,
+    series: [{ label: 'Precip', field: 'precip', color: HUE.blue }],
   },
   {
-    key: 'hum', label: 'Humidity', unit: '%',
+    key: 'hum', label: 'Humidity',
     series: [
-      { label: 'High', field: 'hum_high', color: '#f87272', extra: { fill: true } },
-      { label: 'Avg',  field: 'hum_avg',  color: '#facc15' },
-      { label: 'Low',  field: 'hum_low',  color: '#60a5fa', extra: { fill: true } },
+      { label: 'High', field: 'hum_high', color: HUE.red, extra: { fill: true } },
+      { label: 'Avg',  field: 'hum_avg',  color: HUE.amber },
+      { label: 'Low',  field: 'hum_low',  color: HUE.blue, extra: { fill: true } },
     ],
     // Humidity is a percentage, so pin the axis rather than letting it autoscale.
     opts: { scales: { y: { min: 0, max: 100 } } },
   },
   {
-    key: 'pres', label: 'Pressure', unit: 'hPa',
+    key: 'pres', label: 'Pressure',
     series: [
-      { label: 'High', field: 'pres_high', color: '#a78bfa' },
-      { label: 'Low',  field: 'pres_low',  color: '#818cf8', extra: { fill: true } },
+      { label: 'High', field: 'pres_high', color: HUE.violet },
+      { label: 'Low',  field: 'pres_low',  color: HUE.indigo, extra: { fill: true } },
     ],
   },
   {
-    key: 'wind', label: 'Wind', unit: 'km/h',
+    key: 'wind', label: 'Wind',
     series: [
-      { label: 'High', field: 'wind_high', color: '#fb923c', extra: { fill: true } },
-      { label: 'Avg',  field: 'wind_avg',  color: '#fdba74' },
+      { label: 'High', field: 'wind_high', color: HUE.orange, extra: { fill: true } },
+      { label: 'Avg',  field: 'wind_avg',  color: HUE.peach },
     ],
   },
 ];
@@ -944,7 +984,7 @@ const chartId = (key: string) => `chart-${key}`;
 const DASHBOARD_VIEW = view<ChartSpec>('dashboard', {
   specs: CHART_META,
   id: c => chartId(c.key),
-  title: c => `${c.label} (${c.unit})`,
+  title: c => `${c.label} (${unitOf(c.key)})`,
   col: 'col-12 col-md-6 col-xl-4',
   height: 120,
   tableHover: true,
@@ -1063,11 +1103,13 @@ importBtn.addEventListener('click', async () => {
 // be three hand-kept lists — two here and one in index.html — naming the same
 // four keys.
 interface CompareSpec extends ChartSpecBase {
+  /** Also names the stat card this measure's unit comes from (`prefixOf`). */
   key: SharedKey;
   /** Suffix on the chart's series names ("Me · High"); bar charts use none. */
   series?: string;
-  /** Heading on the chart card. */
+  /** Heading on the chart card; the unit is appended. */
   title: string;
+  /** Label on the summary row; the unit is appended. */
   row: string;
 }
 
@@ -1076,20 +1118,19 @@ interface CompareSpec extends ChartSpecBase {
 const cmpId = (key: SharedKey) => `cmp-${key.replace(/_/g, '-')}`;
 
 const COMPARE_META: CompareSpec[] = [
-  { key: 'temp_high', series: 'High',
-    title: 'Temperature High (°C)', row: 'Temp High (°C)' },
-  { key: 'temp_low',  series: 'Low',
-    title: 'Temperature Low (°C)',  row: 'Temp Low (°C)' },
-  { key: 'precip',    type: 'bar',
-    title: 'Precipitation (mm)',    row: 'Precip (mm)' },
-  { key: 'wind_high', series: 'Wind',
-    title: 'Wind Max (km/h)',       row: 'Wind Max (km/h)' },
+  { key: 'temp_high', series: 'High', title: 'Temperature High', row: 'Temp High' },
+  { key: 'temp_low',  series: 'Low',  title: 'Temperature Low',  row: 'Temp Low' },
+  { key: 'precip',    type: 'bar',    title: 'Precipitation',    row: 'Precip' },
+  { key: 'wind_high', series: 'Wind', title: 'Wind Max',         row: 'Wind Max' },
 ];
+
+/** "Temp High (°C)" — a Compare heading with its measure's unit appended. */
+const cmpHeading = (text: string, key: SharedKey) => `${text} (${unitOf(prefixOf(key))})`;
 
 const COMPARE_VIEW = view<CompareSpec>('cmp', {
   specs: COMPARE_META,
   id: m => cmpId(m.key),
-  title: m => m.title,
+  title: m => cmpHeading(m.title, m.key),
   col: 'col-12 col-xl-6',
   height: 110,
 });
@@ -1260,9 +1301,9 @@ async function loadCompare(): Promise<void> {
   // Align public rows to my dates so both series share the same x-axis.
   const pub = new Map<string, PublicRow>(data.public.map(p => [p.date, p]));
   const sides: CompareSide[] = [
-    { name: 'Me', head: 'My avg', color: '#38bdf8', values: key => lastRows.map(r => r[key]) },
+    { name: 'Me', head: 'My avg', color: HUE.sky, values: key => lastRows.map(r => r[key]) },
     {
-      name: 'Baar', head: 'Baar avg', color: '#fb923c', extra: { borderDash: [5, 3] },
+      name: 'Baar', head: 'Baar avg', color: HUE.orange, extra: { borderDash: [5, 3] },
       values: key => lastRows.map(r => pub.get(r.date)?.[key] ?? null),
     },
   ];
@@ -1287,7 +1328,7 @@ function renderCompareSummary(sides: CompareSide[]): void {
   renderDeltaTable(COMPARE_VIEW.table, {
     columns: sides.map(s => s.head),
     metrics: COMPARE_META,
-    label: m => m.row,
+    label: m => cmpHeading(m.row, m.key),
     values: m => sides.map(s => avg(s.values(m.key))),
     format: () => one,
     delta: { head: 'Difference', of: (mine, theirs) => mine - theirs },
@@ -1355,21 +1396,30 @@ type YoyUnit = keyof typeof YOY_UNITS;
 const YOY_STRIP = stripsIn('yoy-controls', YOY_UNITS);
 
 // A distinct, cycled colour per year across all the charts.
-const YEAR_COLORS = ['#38bdf8', '#fb923c', '#4ade80', '#f472b6', '#facc15', '#a78bfa'];
+const YEAR_COLORS = [HUE.sky, HUE.orange, HUE.green, HUE.pink, HUE.amber, HUE.violet];
 const yearColor = (i: number) => YEAR_COLORS[i % YEAR_COLORS.length];
 
 // One chart per metric; each draws one line (or bar) per year. `get` reads the
 // plotted value from a row — a function, not a key, so derived measures like
 // mid-pressure fit the same list.
-interface YoyMetric extends ChartSpecBase { id: string; title: string; get: (r: WeatherRow) => number; }
+interface YoyMetric extends ChartSpecBase {
+  id: string;
+  /** The stat card this metric's unit comes from. */
+  prefix: string;
+  /** Heading on the chart card; the unit is appended. */
+  label: string;
+  get: (r: WeatherRow) => number;
+}
 const YOY_METRICS: YoyMetric[] = [
-  { id: 'yoy-temp-avg',  title: 'Temp Avg (°C)',      get: r => r.temp_avg },
-  { id: 'yoy-temp-high', title: 'Temp High (°C)',     get: r => r.temp_high },
-  { id: 'yoy-temp-low',  title: 'Temp Low (°C)',      get: r => r.temp_low },
-  { id: 'yoy-hum-avg',   title: 'Humidity Avg (%)',   get: r => r.hum_avg },
-  { id: 'yoy-wind-high', title: 'Wind Max (km/h)',    get: r => r.wind_high },
-  { id: 'yoy-pres-avg',  title: 'Pressure Avg (hPa)', get: r => (r.pres_high + r.pres_low) / 2 },
-  { id: 'yoy-precip',    title: 'Precipitation (mm)', type: 'bar', get: r => r.precip },
+  { id: 'yoy-temp-avg',  prefix: 'temp',   label: 'Temp Avg',      get: r => r.temp_avg },
+  { id: 'yoy-temp-high', prefix: 'temp',   label: 'Temp High',     get: r => r.temp_high },
+  { id: 'yoy-temp-low',  prefix: 'temp',   label: 'Temp Low',      get: r => r.temp_low },
+  { id: 'yoy-hum-avg',   prefix: 'hum',    label: 'Humidity Avg',  get: r => r.hum_avg },
+  { id: 'yoy-wind-high', prefix: 'wind',   label: 'Wind Max',      get: r => r.wind_high },
+  { id: 'yoy-pres-avg',  prefix: 'pres',   label: 'Pressure Avg',
+    get: r => (r.pres_high + r.pres_low) / 2 },
+  { id: 'yoy-precip',    prefix: 'precip', label: 'Precipitation', type: 'bar',
+    get: r => r.precip },
 ];
 
 // The averages table, one row per stat. A row names the stat card it reads —
@@ -1394,7 +1444,7 @@ let yoyUnit: YoyUnit = 'month';
 const YOY_VIEW = view<YoyMetric>('yoy', {
   specs: YOY_METRICS,
   id: m => m.id,
-  title: m => m.title,
+  title: m => `${m.label} (${unitOf(m.prefix)})`,
   col: 'col-12 col-md-6 col-xl-4',
   height: 120,
 });
