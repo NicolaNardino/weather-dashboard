@@ -33,8 +33,11 @@ interface PublicRow {
   precip: number | null;
 }
 
+/** A stored measure — every column of a row but the date it is keyed by. */
+type Measure = Exclude<keyof WeatherRow, 'date'>;
+
 /** The measures both my rows and the public ones carry — the Compare axis. */
-type SharedKey = Exclude<keyof WeatherRow & keyof PublicRow, 'date'>;
+type SharedKey = Measure & keyof PublicRow;
 
 const CHART_DEFAULTS = {
   responsive: true,
@@ -810,10 +813,6 @@ const STAT_CARDS: StatCard[] = [
     headline: 'avg', sub: HIGH_LOW },
 ];
 
-/** A card's stat, with its unit appended — a count (see `bare`) carries none. */
-const statText = (card: StatCard, key: string, value: number | string): string =>
-  card.bare?.includes(key) ? String(value) : `${value} ${card.unit}`;
-
 /** The card a stats group belongs to, by prefix — how a metric finds its unit. */
 const CARD_BY_PREFIX: Record<string, StatCard> = Object.fromEntries(
   STAT_CARDS.map(c => [c.prefix, c]),
@@ -831,6 +830,16 @@ const CARD_BY_PREFIX: Record<string, StatCard> = Object.fromEntries(
  * own key where that key IS the prefix.
  */
 const unitOf = (prefix: string): string => CARD_BY_PREFIX[prefix].unit;
+
+/**
+ * A measure's value with its unit appended — a count (see `bare`) carries none.
+ *
+ * Named by the same prefix `unitOf` takes, rather than by a card handed in: the
+ * two answer questions about the same card, and the caller that needed both
+ * ended up reaching into CARD_BY_PREFIX itself to supply one of them.
+ */
+const statText = (prefix: string, key: string, value: number | string): string =>
+  CARD_BY_PREFIX[prefix].bare?.includes(key) ? String(value) : `${value} ${unitOf(prefix)}`;
 
 /** The stat-card prefix behind a stored measure: `temp_high` → `temp`. */
 const prefixOf = (field: string): string => field.split('_')[0];
@@ -866,7 +875,7 @@ function renderStats(s: Stats | undefined): void {
   if (!s) return;
   for (const c of STAT_CARDS) {
     for (const [key, value] of Object.entries(c.pick(s))) {
-      el(statId(c.prefix, key)).textContent = statText(c, key, value);
+      el(statId(c.prefix, key)).textContent = statText(c.prefix, key, value);
     }
   }
 }
@@ -913,9 +922,6 @@ interface ChartSpec extends ChartSpecBase {
       grid's default cell size give their own. */
   series: { label: string; field: Measure; color: string; extra?: any }[];
 }
-
-/** A stored measure a dashboard series can plot. */
-type Measure = Exclude<keyof WeatherRow, 'date'>;
 
 const CHART_META: ChartSpec[] = [
   {
@@ -972,7 +978,7 @@ function loadChartVisibility(): Record<string, boolean> {
   return Object.fromEntries(CHART_META.map(c => [c.key, saved[c.key] !== false]));
 }
 
-let chartVisibility: Record<string, boolean> = loadChartVisibility();
+const chartVisibility: Record<string, boolean> = loadChartVisibility();
 
 /**
  * A dashboard chart's canvas id. Only YOY_METRICS names its canvases outright —
@@ -1511,7 +1517,7 @@ function renderYoySummary(data: YoyResponse): void {
     // A row names the stat card it reads, so both the accessor and the unit come
     // from STAT_CARDS rather than being restated here.
     values: m => data.years.map(y => CARD_BY_PREFIX[m.prefix].pick(y.stats)[m.key]),
-    format: m => v => statText(CARD_BY_PREFIX[m.prefix], m.key, v),
+    format: m => v => statText(m.prefix, m.key, v),
     // With ≥2 years, a trailing column shows the change from the earliest to the
     // latest year — the headline "how did this period differ" number.
     delta:

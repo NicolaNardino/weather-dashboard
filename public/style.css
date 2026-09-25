@@ -17,7 +17,13 @@ body { font-size: 14px; }
 
 canvas { display: block; }
 
-#controls input:not([type="checkbox"]), #controls select {
+/* Every picker on the page, wherever its strip lives. Scoping this to #controls
+   styled only the dashboard's period strip, leaving the two Across-Years strips
+   (the unit selector and the unit's own value pickers) on the browser's default
+   rendering — the same controls looking different depending on which view they
+   sit in. The rule also still excluded text inputs, which stopped existing when
+   the date pickers became <select>s, so its `input` half matched nothing. */
+select {
   background: #2a2a3a;
   border: 1px solid #444;
   color: #ccc;
@@ -26,13 +32,13 @@ canvas { display: block; }
   font-size: 13px;
 }
 
-/* "All" range checkbox: unchecked is dark, checked turns red with a
-   visible white check mark (keep Bootstrap's check-mark background-image). */
-#controls input[type="checkbox"] {
+/* "All" range checkbox — the page's one input: unchecked is dark, checked turns
+   red with a visible white check mark (keep Bootstrap's check-mark image). */
+input[type="checkbox"] {
   background-color: #2a2a3a;
   border: 1px solid #666;
 }
-#controls input[type="checkbox"]:checked {
+input[type="checkbox"]:checked {
   background-color: #dc3545;
   border-color: #dc3545;
 }
