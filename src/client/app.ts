@@ -832,6 +832,15 @@ const CARD_BY_PREFIX: Record<string, StatCard> = Object.fromEntries(
 const unitOf = (prefix: string): string => CARD_BY_PREFIX[prefix].unit;
 
 /**
+ * A heading with its measure's unit in parentheses — "Temp High (°C)". All
+ * three views title their chart cards this way and the Compare view labels its
+ * summary rows the same, and each wrote the parenthesised unit out itself. The
+ * shape now sits beside `unitOf`, which the same comment above already explains
+ * exists so a unit is named once rather than per heading.
+ */
+const withUnit = (text: string, prefix: string): string => `${text} (${unitOf(prefix)})`;
+
+/**
  * A measure's value with its unit appended — a count (see `bare`) carries none.
  *
  * Named by the same prefix `unitOf` takes, rather than by a card handed in: the
@@ -990,7 +999,7 @@ const chartId = (key: string) => `chart-${key}`;
 const DASHBOARD_VIEW = view<ChartSpec>('dashboard', {
   specs: CHART_META,
   id: c => chartId(c.key),
-  title: c => `${c.label} (${unitOf(c.key)})`,
+  title: c => withUnit(c.label, c.key),
   col: 'col-12 col-md-6 col-xl-4',
   height: 120,
   tableHover: true,
@@ -1130,8 +1139,9 @@ const COMPARE_META: CompareSpec[] = [
   { key: 'wind_high', series: 'Wind', title: 'Wind Max',         row: 'Wind Max' },
 ];
 
-/** "Temp High (°C)" — a Compare heading with its measure's unit appended. */
-const cmpHeading = (text: string, key: SharedKey) => `${text} (${unitOf(prefixOf(key))})`;
+/** A Compare heading, whose measure names its stat card by field rather than
+    by prefix — its charts and its summary rows both read one. */
+const cmpHeading = (text: string, key: SharedKey) => withUnit(text, prefixOf(key));
 
 const COMPARE_VIEW = view<CompareSpec>('cmp', {
   specs: COMPARE_META,
@@ -1450,7 +1460,7 @@ let yoyUnit: YoyUnit = 'month';
 const YOY_VIEW = view<YoyMetric>('yoy', {
   specs: YOY_METRICS,
   id: m => m.id,
-  title: m => `${m.label} (${unitOf(m.prefix)})`,
+  title: m => withUnit(m.label, m.prefix),
   col: 'col-12 col-md-6 col-xl-4',
   height: 120,
 });
