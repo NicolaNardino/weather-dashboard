@@ -22,7 +22,8 @@ interface Stats {
   humidity: StatTriple;
   wind: { high: number; avg: number };
   pressure: StatTriple;
-  precip: { total: number; rainy_days: number };
+  precip: { total: number; max: number };
+  rain: { days: number; dry: number; pct: number };
 }
 
 interface PublicRow {
@@ -808,7 +809,11 @@ const STAT_CARDS: StatCard[] = [
   { prefix: 'pres', title: 'Pressure', pick: s => s.pressure, unit: 'hPa',
     headline: 'avg', sub: HIGH_LOW },
   { prefix: 'precip', title: 'Precipitation', pick: s => s.precip, unit: 'mm',
-    headline: 'total', sub: [{ key: 'rainy_days', after: ' rainy days' }], bare: ['rainy_days'] },
+    headline: 'total', sub: [{ key: 'max', before: 'wettest day ' }] },
+  // Rain days: a day with any precipitation. `pct` is of the days with data.
+  { prefix: 'rain', title: 'Rain Days', pick: s => s.rain, unit: '%',
+    headline: 'days', sub: [{ key: 'pct', after: ' of days · ' }, { key: 'dry', after: ' dry' }],
+    bare: ['days', 'dry'] },
   { prefix: 'dew', title: 'Dew Point', pick: s => s.dew, unit: '°C',
     headline: 'avg', sub: HIGH_LOW },
 ];
@@ -865,12 +870,12 @@ const statSpan = (prefix: string, key: string) => `<span id="${statId(prefix, ke
 
 function renderStatCards(): void {
   renderList('stat-cards', STAT_CARDS, c => `
-    <div class="col-6 col-md-4 col-xl-2">
+    <div class="col-6 col-md-4 col-xl">
       ${cardWell({
         cls: 'h-100',
         bodyCls: 'p-3',
         body: `<div class="text-muted small">${c.title}</div>
-          <div class="fs-4 fw-bold" id="${statId(c.prefix, c.headline)}">—</div>
+          <div class="fs-5 fw-bold text-nowrap" id="${statId(c.prefix, c.headline)}">—</div>
           <div class="small text-muted">${c.sub
             .map(p => `${p.before ?? ''}${statSpan(c.prefix, p.key)}${p.after ?? ''}`)
             .join('')}</div>`,
@@ -1460,7 +1465,8 @@ const YOY_SUMMARY: { label: string; prefix: string; key: string }[] = [
   { label: 'Wind max',     prefix: 'wind',   key: 'high' },
   { label: 'Pressure avg', prefix: 'pres',   key: 'avg' },
   { label: 'Precip total', prefix: 'precip', key: 'total' },
-  { label: 'Rainy days',   prefix: 'precip', key: 'rainy_days' },
+  { label: 'Rain days',    prefix: 'rain',   key: 'days' },
+  { label: 'Rain days %',  prefix: 'rain',   key: 'pct' },
 ];
 
 // The current comparison unit; its value pickers are rebuilt when it changes.

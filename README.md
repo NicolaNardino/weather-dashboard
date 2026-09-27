@@ -19,7 +19,9 @@ server to run.
   pickers only offer dates that actually exist in your data, and an **All**
   toggle spans the entire dataset in one click.
 - **At-a-glance stats** — high/avg/low cards for every metric, plus totals
-  like accumulated precipitation and number of rainy days.
+  like accumulated precipitation and the wettest day, plus a **Rain Days** card
+  counting the days with any precipitation in the selected window (with their
+  share of the days that have data, and the dry-day count).
 - **Interactive charts** — temperature, precipitation, humidity, pressure and
   wind rendered with Chart.js.
 - **Compare vs. a public station** — overlay your readings against
