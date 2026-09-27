@@ -1,8 +1,10 @@
 import { DatabaseSync } from 'node:sqlite';
 import path from 'path';
-import { addDays, isoDay, ymd } from './dates';
+import { addDays, dayCount, eachDay, isoDay, ymd } from './dates';
+import type { NormalRow } from './normals';
 
-const DB_PATH = path.join(process.cwd(), 'weather.db');
+// WEATHER_DB lets the tests point the app at a throwaway database.
+const DB_PATH = process.env.WEATHER_DB ?? path.join(process.cwd(), 'weather.db');
 
 /**
  * The 15 measure columns, in the order they appear in weather_data.txt after
@@ -68,6 +70,17 @@ function getDb(): DatabaseSync {
         PRIMARY KEY (location, date)
       )
     `);
+    // Long-term daily normals per location, keyed by calendar day (MM-DD).
+    // Computed once from a 30-year archive download (see normals.ts), so the
+    // Compare view's reference line costs one fetch ever, not one per view.
+    _db.exec(`
+      CREATE TABLE IF NOT EXISTS public_normals (
+        location TEXT NOT NULL,
+        md       TEXT NOT NULL,
+        ${PUBLIC_FIELDS.map(f => `${f} REAL`).join(', ')},
+        PRIMARY KEY (location, md)
+      )
+    `);
   }
   return _db;
 }
@@ -112,26 +125,41 @@ export function queryRange(from: string, to: string): WeatherRow[] {
   );
 }
 
-/** One day as a row list — the row-list shape every other period query returns. */
-export const queryDayRows = (date: string): WeatherRow[] => queryRange(date, date);
+/** An inclusive window of calendar days, as stored `YYYY-MM-DD` keys. */
+export interface Window { from: string; to: string }
 
-/** One calendar month. Day 31 is a safe upper bound — the dates are compared as
-    strings, so a shorter month simply has no rows past its own last day. */
-export function queryMonth(year: number, month: number): WeatherRow[] {
-  return queryRange(ymd(year, month, 1), ymd(year, month, 31));
+export const dayWindow = (date: string): Window => ({ from: date, to: date });
+
+export function monthWindow(year: number, month: number): Window {
+  // Day 0 of the next month is this month's last day.
+  const last = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return { from: ymd(year, month, 1), to: ymd(year, month, last) };
 }
 
-export function queryYear(year: number): WeatherRow[] {
-  return queryRange(ymd(year, 1, 1), ymd(year, 12, 31));
-}
+export const yearWindow = (year: number): Window =>
+  ({ from: ymd(year, 1, 1), to: ymd(year, 12, 31) });
 
-export function queryWeek(year: number, week: number): WeatherRow[] {
+export function weekWindow(year: number, week: number): Window {
   // ISO week: walk back from Jan 4 (always in week 1) to that week's Monday.
   // Built in UTC to match `isoDay`, which reads the date back out that way.
   const jan4 = new Date(Date.UTC(year, 0, 4));
   const monday = addDays(jan4, -((jan4.getUTCDay() || 7) - 1) + (week - 1) * 7);
-  return queryRange(isoDay(monday), isoDay(addDays(monday, 6)));
+  return { from: isoDay(monday), to: isoDay(addDays(monday, 6)) };
 }
+
+/** The rows inside a window — every period query is one of these. */
+export const queryWindow = (w: Window): WeatherRow[] => queryRange(w.from, w.to);
+
+/** One day as a row list — the row-list shape every other period query returns. */
+export const queryDayRows = (date: string): WeatherRow[] => queryWindow(dayWindow(date));
+
+export const queryMonth = (year: number, month: number): WeatherRow[] =>
+  queryWindow(monthWindow(year, month));
+
+export const queryYear = (year: number): WeatherRow[] => queryWindow(yearWindow(year));
+
+export const queryWeek = (year: number, week: number): WeatherRow[] =>
+  queryWindow(weekWindow(year, week));
 
 /** Every stored row. Only the import needs this — it diffs against what's there. */
 export function queryAllRows(): WeatherRow[] {
@@ -171,6 +199,18 @@ export function upsertPublic(location: string, rows: PublicRow[]): void {
   }
 }
 
+export function queryNormals(location: string): NormalRow[] {
+  return all<NormalRow>(
+    `SELECT md, ${PUBLIC_FIELDS.join(', ')} FROM public_normals WHERE location = ? ORDER BY md`,
+    location,
+  );
+}
+
+export function upsertNormals(location: string, rows: NormalRow[]): void {
+  const stmt = upsertStmt('public_normals', ['location', 'md', ...PUBLIC_FIELDS]);
+  for (const r of rows) stmt.run(location, r.md, ...PUBLIC_FIELDS.map(f => r[f]));
+}
+
 export function aggregateStats(rows: WeatherRow[]) {
   if (!rows.length) return null;
 
@@ -208,8 +248,16 @@ export function aggregateStats(rows: WeatherRow[]) {
       max:   max(r => r.precip),
     },
     rain: rainDays(rows),
+    climate: climateDays(rows),
+    spells: {
+      wet: longestSpell(rows, isRainy),
+      dry: longestSpell(rows, r => !isRainy(r)),
+    },
   };
 }
+
+/** A rain day: any precipitation recorded. Rain days and wet/dry spells agree on it. */
+const isRainy = (r: WeatherRow): boolean => r.precip > 0;
 
 /**
  * Rain days over a set of rows: a day counts as rainy when any precipitation
@@ -217,10 +265,86 @@ export function aggregateStats(rows: WeatherRow[]) {
  * calendar days in the period), so a gap in the record doesn't read as dry.
  */
 export function rainDays(rows: WeatherRow[]) {
-  const days = rows.filter(r => r.precip > 0).length;
+  const days = rows.filter(isRainy).length;
   return {
     days,
     dry: rows.length - days,
     pct: rows.length ? Math.round((days / rows.length) * 100) : 0,
   };
+}
+
+/**
+ * The MeteoSwiss climate-day counts: frost days (low below 0 °C), ice days
+ * (high below 0 °C — every ice day is also a frost day), summer days (high of
+ * 25 °C or more) and hot days (high of 30 °C or more — also summer days).
+ */
+export function climateDays(rows: WeatherRow[]) {
+  const count = (test: (r: WeatherRow) => boolean) => rows.filter(test).length;
+  return {
+    frost:  count(r => r.temp_low < 0),
+    ice:    count(r => r.temp_high < 0),
+    summer: count(r => r.temp_high >= 25),
+    hot:    count(r => r.temp_high >= 30),
+  };
+}
+
+/** A run of consecutive days; `from`/`to` are null when no day qualified. */
+export interface Spell { days: number; from: string | null; to: string | null }
+
+/**
+ * The longest run of consecutive calendar days that all pass `test`, earliest
+ * first on a tie. A day missing from the record ends the run rather than being
+ * assumed either way. `rows` must be in date order, as every query returns them.
+ */
+export function longestSpell(rows: WeatherRow[], test: (r: WeatherRow) => boolean): Spell {
+  let best: Spell = { days: 0, from: null, to: null };
+  let start = '';
+  let len = 0;
+  let prev = '';
+  for (const r of rows) {
+    if (!test(r)) { len = 0; prev = r.date; continue; }
+    if (len && dayCount(prev, r.date) === 2) len++;
+    else { len = 1; start = r.date; }
+    prev = r.date;
+    if (len > best.days) best = { days: len, from: start, to: r.date };
+  }
+  return best;
+}
+
+/**
+ * Running precipitation total through each year, one point per recorded day:
+ * the year-to-date rain curve. A year whose record starts mid-year accumulates
+ * from its first recorded day.
+ */
+export function precipYtd(): { year: number; days: { md: string; total: number }[] }[] {
+  return queryYears().map(year => {
+    let total = 0;
+    const days = queryYear(year).map(r => {
+      total += r.precip;
+      return { md: r.date.slice(5), total: Math.round(total * 100) / 100 };
+    });
+    return { year, days };
+  });
+}
+
+/**
+ * How completely a window is recorded: the days it should hold, the days it
+ * does, and the dates it is missing.
+ *
+ * The window is first clipped to the span the station has records for at all
+ * (first to latest stored date), so days before the station started, and days
+ * that haven't happened or been imported yet, don't count as missing — a Year
+ * view in September isn't "missing" October to December.
+ */
+export function coverage(w: Window, rows: WeatherRow[]) {
+  const bounds = one<{ first: string | null; last: string | null }>(
+    'SELECT MIN(date) AS first, MAX(date) AS last FROM weather',
+  );
+  const from = bounds?.first && bounds.first > w.from ? bounds.first : w.from;
+  const to = bounds?.last && bounds.last < w.to ? bounds.last : w.to;
+  const have = new Set(rows.map(r => r.date));
+  const days = bounds?.first ? eachDay(from, to) : [];
+  const missing = days.filter(d => !have.has(d));
+  const expected = days.length;
+  return { expected, recorded: expected - missing.length, missing };
 }

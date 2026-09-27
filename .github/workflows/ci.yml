@@ -46,6 +46,11 @@ jobs:
       - name: Build
         run: npm run build
 
+      # Unit and route tests (node:test via ts-node), each file against its own
+      # throwaway database — no network, no real weather.db.
+      - name: Unit tests
+        run: npm test
+
       # Parses the committed weather_data.txt into weather.db. Catches parser
       # regressions against real fixture data, and gives the server below a
       # populated database to serve.

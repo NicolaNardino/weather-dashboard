@@ -60,6 +60,11 @@ const STAT_READY = () => document.getElementById('s-temp-avg')?.textContent !== 
     if (empty.length) {
       failures.push(`${label}: ${empty.length} stat card(s) still empty: ${empty.map(s => s.id).join(', ')}`);
     }
+
+    // The missing-day indicator is set on every load, gaps or not.
+    const coverage = ((await page.textContent('#coverage')) ?? '').trim();
+    if (!coverage) failures.push(`${label}: missing-day indicator is empty`);
+    else console.log(`  ${label} coverage: ${coverage}`);
   }
 
   const res = await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' });
@@ -68,6 +73,23 @@ const STAT_READY = () => document.getElementById('s-temp-avg')?.textContent !== 
   await capture('day', 'dashboard.png');
   await capture('month', 'dashboard-month.png', '[data-period="month"]');
   await capture('year', 'dashboard-year.png', '[data-period="year"]');
+
+  // The Year period spans many months, so it must also draw the calendar heatmap.
+  const calDays = await page.$$eval('#calendar .cal-day[data-date]', els => els.length);
+  if (!calDays) failures.push('year: calendar heatmap drew no days');
+
+  // Across Years: the year-to-date rain chart fills its "As of …" note once drawn.
+  try {
+    await page.click('#btn-yoy');
+    await page.waitForFunction(
+      () => (document.getElementById('ytd-note')?.textContent ?? '').startsWith('As of'),
+      undefined, { timeout: 15000 },
+    );
+    await page.screenshot({ path: path.join(__dirname, 'dashboard-yoy.png'), fullPage: true });
+    console.log('Screenshot: dashboard-yoy.png');
+  } catch (e) {
+    failures.push(`across years: ${e instanceof Error ? e.message : String(e)}`);
+  }
 
   await browser.close();
 

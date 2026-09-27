@@ -35,3 +35,10 @@ export const addDays = (d: Date, days: number): Date => {
 /** How many calendar days `[from, to]` spans, both ends included. */
 export const dayCount = (from: string, to: string): number =>
   Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000) + 1;
+
+/** Every `YYYY-MM-DD` day in `[from, to]`, both ends included; empty if from > to. */
+export function eachDay(from: string, to: string): string[] {
+  const days: string[] = [];
+  for (let d = new Date(`${from}T00:00:00Z`); isoDay(d) <= to; d = addDays(d, 1)) days.push(isoDay(d));
+  return days;
+}

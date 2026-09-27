@@ -24,7 +24,12 @@ interface Stats {
   pressure: StatTriple;
   precip: { total: number; max: number };
   rain: { days: number; dry: number; pct: number };
+  climate: { frost: number; ice: number; summer: number; hot: number };
+  spells: { wet: Spell; dry: Spell };
 }
+
+/** A run of consecutive days; `from`/`to` are null when no day qualified. */
+interface Spell { days: number; from: string | null; to: string | null }
 
 interface PublicRow {
   date: string;
@@ -742,20 +747,24 @@ async function reloadDates(): Promise<void> {
 
 // --- Load data ---
 async function load(): Promise<void> {
-  let data: { rows: WeatherRow[]; stats: Stats };
+  let data: { rows: WeatherRow[]; stats: Stats; coverage: Coverage };
   try {
     const url = api(period, PERIOD_STRIP.params(period));
-    data = await fetchJson<{ rows: WeatherRow[]; stats: Stats }>(url);
+    data = await fetchJson<typeof data>(url);
   } catch {
     // A period the server has no data for (the day route 404s) — blank the
     // dashboard rather than leaving the previous period's rows on screen.
     lastRows = [];
     clearView(DASHBOARD_VIEW);
+    renderCalendar([], []);
+    renderCoverage(null);
     return;
   }
 
   lastRows = data.rows;
   renderStats(data.stats);
+  renderCoverage(data.coverage);
+  renderCalendar(data.rows, data.coverage.missing);
   renderCharts(data.rows);
   renderTable(data.rows);
 }
@@ -795,12 +804,16 @@ interface StatCard {
   sub: { key: string; before?: string; after?: string }[];
   /** Keys that are counts, not measurements, so they carry no unit. */
   bare?: string[];
+  /** Hover text for the whole card — a definition, or detail that doesn't fit. */
+  hint?: (s: Stats) => string;
 }
 
 const HIGH_LOW: StatCard['sub'] = [{ key: 'low', after: ' / ' }, { key: 'high' }];
 
 const STAT_CARDS: StatCard[] = [
   { prefix: 'temp', title: 'Temperature', pick: s => s.temp, unit: '°C',
+    headline: 'avg', sub: HIGH_LOW },
+  { prefix: 'dew', title: 'Dew Point', pick: s => s.dew, unit: '°C',
     headline: 'avg', sub: HIGH_LOW },
   { prefix: 'hum', title: 'Humidity', pick: s => s.humidity, unit: '%',
     headline: 'avg', sub: HIGH_LOW },
@@ -814,9 +827,25 @@ const STAT_CARDS: StatCard[] = [
   { prefix: 'rain', title: 'Rain Days', pick: s => s.rain, unit: '%',
     headline: 'days', sub: [{ key: 'pct', after: ' of days · ' }, { key: 'dry', after: ' dry' }],
     bare: ['days', 'dry'] },
-  { prefix: 'dew', title: 'Dew Point', pick: s => s.dew, unit: '°C',
-    headline: 'avg', sub: HIGH_LOW },
+  // Spells are consecutive calendar days; a day missing from the record ends one.
+  { prefix: 'spell', title: 'Longest Wet Spell', unit: 'days',
+    pick: s => ({ wet: s.spells.wet.days, dry: s.spells.dry.days }),
+    headline: 'wet', sub: [{ key: 'dry', before: 'longest dry ' }],
+    hint: s => `Wet: ${spellText(s.spells.wet)}\nDry: ${spellText(s.spells.dry)}` },
+  // The MeteoSwiss climate-day definitions, on the card's hover text.
+  { prefix: 'frost', title: 'Frost Days', unit: 'days',
+    pick: s => ({ frost: s.climate.frost, ice: s.climate.ice }),
+    headline: 'frost', sub: [{ key: 'ice', after: ' ice days' }], bare: ['frost', 'ice'],
+    hint: () => 'Frost day: low below 0 °C\nIce day: high below 0 °C' },
+  { prefix: 'summer', title: 'Summer Days', unit: 'days',
+    pick: s => ({ summer: s.climate.summer, hot: s.climate.hot }),
+    headline: 'summer', sub: [{ key: 'hot', after: ' hot days' }], bare: ['summer', 'hot'],
+    hint: () => 'Summer day: high of 25 °C or more\nHot day: high of 30 °C or more' },
 ];
+
+/** "6 days, 2026-03-02 → 2026-03-07" — or "none" when no day qualified. */
+const spellText = (sp: Spell): string =>
+  sp.from ? `${sp.days} day${sp.days === 1 ? '' : 's'}, ${sp.from} → ${sp.to}` : 'none';
 
 /** The card a stats group belongs to, by prefix — how a metric finds its unit. */
 const CARD_BY_PREFIX: Record<string, StatCard> = Object.fromEntries(
@@ -852,8 +881,12 @@ const withUnit = (text: string, prefix: string): string => `${text} (${unitOf(pr
  * two answer questions about the same card, and the caller that needed both
  * ended up reaching into CARD_BY_PREFIX itself to supply one of them.
  */
-const statText = (prefix: string, key: string, value: number | string): string =>
-  CARD_BY_PREFIX[prefix].bare?.includes(key) ? String(value) : `${value} ${unitOf(prefix)}`;
+const statText = (prefix: string, key: string, value: number | string): string => {
+  if (CARD_BY_PREFIX[prefix].bare?.includes(key)) return String(value);
+  const unit = unitOf(prefix);
+  // A count of days reads "1 day", not "1 days".
+  return `${value} ${unit === 'days' && value === 1 ? 'day' : unit}`;
+};
 
 /** The stat-card prefix behind a stored measure: `temp_high` → `temp`. */
 const prefixOf = (field: string): string => field.split('_')[0];
@@ -866,16 +899,20 @@ const prefixOf = (field: string): string => field.split('_')[0];
  */
 const statId = (prefix: string, key: string) => `s-${prefix}-${key}`;
 
+/** A stat card's own column — where its `hint` hover text goes. Kept off the
+    `s-` prefix, which the harness reads as "a value that must fill in". */
+const statCardId = (prefix: string) => `card-${prefix}`;
+
 const statSpan = (prefix: string, key: string) => `<span id="${statId(prefix, key)}">—</span>`;
 
 function renderStatCards(): void {
   renderList('stat-cards', STAT_CARDS, c => `
-    <div class="col-6 col-md-4 col-xl">
+    <div class="col" id="${statCardId(c.prefix)}">
       ${cardWell({
         cls: 'h-100',
         bodyCls: 'p-3',
         body: `<div class="text-muted small">${c.title}</div>
-          <div class="fs-5 fw-bold text-nowrap" id="${statId(c.prefix, c.headline)}">—</div>
+          <div class="fs-4 fw-bold text-nowrap" id="${statId(c.prefix, c.headline)}">—</div>
           <div class="small text-muted">${c.sub
             .map(p => `${p.before ?? ''}${statSpan(c.prefix, p.key)}${p.after ?? ''}`)
             .join('')}</div>`,
@@ -891,6 +928,7 @@ function renderStats(s: Stats | undefined): void {
     for (const [key, value] of Object.entries(c.pick(s))) {
       el(statId(c.prefix, key)).textContent = statText(c.prefix, key, value);
     }
+    if (c.hint) el(statCardId(c.prefix)).title = c.hint(s);
   }
 }
 
@@ -917,6 +955,7 @@ const HUE = {
   indigo: '#818cf8',
   violet: '#a78bfa',
   pink: '#f472b6',
+  gray: '#9ca3af',
 } as const;
 
 // --- The dashboard charts ---
@@ -1106,6 +1145,195 @@ function renderTable(rows: WeatherRow[]): void {
   );
 }
 
+// --- Missing-day indicator ---
+// How completely the period is recorded, beside the chart toggles. The server
+// clips the period to the span the station has records for, so only a real gap
+// counts: days before the first recording, or not yet imported, don't.
+interface Coverage { expected: number; recorded: number; missing: string[] }
+
+/** Consecutive dates folded into runs: "2026-08-03 → 2026-08-06, 2026-09-01". */
+function dateRuns(dates: string[]): string {
+  const runs: string[][] = [];
+  for (const d of dates) {
+    const run = last(runs);
+    const prev = run && last(run);
+    const next = prev && new Date(Date.parse(`${prev}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+    if (run && next === d) run.push(d); else runs.push([d]);
+  }
+  return runs.map(r => (r.length > 1 ? `${r[0]} → ${last(r)}` : r[0])).join(', ');
+}
+
+function renderCoverage(c: Coverage | null): void {
+  const badge = el('coverage');
+  const n = c?.missing.length ?? 0;
+  badge.className = `small ms-auto ${n ? 'text-warning' : 'text-muted'}`;
+  badge.title = n ? `Missing: ${dateRuns(c!.missing)}` : '';
+  badge.textContent = !c
+    ? 'No data for this period'
+    : !c.expected
+      ? 'Outside the recorded span'
+      : n
+        ? `Missing ${n} day${n === 1 ? '' : 's'} · ${c.recorded} of ${c.expected} recorded`
+        : `All ${c.expected} day${c.expected === 1 ? '' : 's'} recorded`;
+}
+
+// --- Calendar heatmap ---
+// One row per month, one cell per day of the month, coloured by the chosen
+// measure. Shown only when the period spans two months or more (the Year
+// period, a long Range): for a day, a week or one month the charts above
+// already say it better. Clicking a day opens it in the Day period.
+interface CalMetric {
+  field: Measure;
+  label: string;
+  /** Diverging around the period's mean (temperatures), or sequential from zero. */
+  scale: 'diverging' | 'sequential';
+}
+
+const CAL_METRICS: CalMetric[] = [
+  { field: 'temp_avg',  label: 'Temp avg',  scale: 'diverging' },
+  { field: 'temp_high', label: 'Temp high', scale: 'diverging' },
+  { field: 'temp_low',  label: 'Temp low',  scale: 'diverging' },
+  { field: 'precip',    label: 'Precip',    scale: 'sequential' },
+];
+
+/** The heatmap ramps, for a dark surface. Sequential runs dark → light (more
+    reads brighter); diverging is blue ↔ red through a neutral gray, and a dry
+    day sits at a neutral step of its own so "none" never reads as "a little". */
+const CAL_COLORS = {
+  seq: ['#184f95', '#3987e5', '#86b6ef', '#cde2fb'],
+  cold: '#3987e5',
+  mid: '#383835',
+  warm: '#e0524f',
+  none: '#2b2b33',
+};
+
+let calMetric: Measure = readStore<Measure>('calMetric', 'temp_avg');
+/** What the heatmap last drew, so switching the measure can redraw it. */
+let calRows: WeatherRow[] = [];
+let calMissing: string[] = [];
+
+/** Blend two `#rrggbb` colours; t = 0 gives `a`, t = 1 gives `b`. */
+function mix(a: string, b: string, t: number): string {
+  const ch = (hex: string, i: number) => parseInt(hex.slice(1 + i * 2, 3 + i * 2), 16);
+  return '#' + [0, 1, 2]
+    .map(i => Math.round(ch(a, i) + (ch(b, i) - ch(a, i)) * t).toString(16).padStart(2, '0'))
+    .join('');
+}
+
+/** A position along a multi-stop ramp, t in [0, 1]. */
+function ramp(stops: string[], t: number): string {
+  const x = Math.min(Math.max(t, 0), 1) * (stops.length - 1);
+  const i = Math.min(Math.floor(x), stops.length - 2);
+  return mix(stops[i], stops[i + 1], x - i);
+}
+
+/**
+ * The colour scale for one measure over the shown values, plus the legend that
+ * explains it. Temperatures diverge around the period's mean — "colder or
+ * warmer than usual for this window" — since a fixed 0 °C pivot would paint a
+ * whole summer one colour. Precipitation is sequential on a square-root scale:
+ * a few storms would otherwise wash every ordinary wet day out to the floor.
+ */
+function calScale(m: CalMetric, values: number[]) {
+  const lo = Math.min(...values);
+  const hi = Math.max(...values);
+  const unit = unitOf(prefixOf(m.field));
+  const fmt = (v: number) => `${Math.round(v * 10) / 10} ${unit}`;
+  if (m.scale === 'sequential') {
+    return {
+      color: (v: number) => (v > 0 && hi > 0 ? ramp(CAL_COLORS.seq, Math.sqrt(v / hi)) : CAL_COLORS.none),
+      gradient: `${CAL_COLORS.none} 0 8%, ${CAL_COLORS.seq.join(', ')}`,
+      ticks: ['dry', fmt(hi)],
+    };
+  }
+  const mean = values.reduce((a, b) => a + b, 0) / values.length;
+  const span = Math.max(hi - mean, mean - lo) || 1;
+  return {
+    color: (v: number) => {
+      const t = (v - mean) / span;
+      return t < 0 ? mix(CAL_COLORS.mid, CAL_COLORS.cold, -t) : mix(CAL_COLORS.mid, CAL_COLORS.warm, t);
+    },
+    gradient: `${mix(CAL_COLORS.mid, CAL_COLORS.cold, (mean - lo) / span)}, ${CAL_COLORS.mid}, ${mix(CAL_COLORS.mid, CAL_COLORS.warm, (hi - mean) / span)}`,
+    ticks: [fmt(lo), `mean ${fmt(mean)}`, fmt(hi)],
+  };
+}
+
+/**
+ * `missing` is the period's coverage gaps: those days are dashed. A day with no
+ * row that isn't in it lies outside the recorded span (before the station
+ * started, or not yet imported) and is left blank, so it doesn't read as a gap.
+ */
+function renderCalendar(rows: WeatherRow[], missing: string[]): void {
+  calRows = rows;
+  calMissing = missing;
+  const gaps = new Set(missing);
+  const months = [...new Set(rows.map(r => r.date.slice(0, 7)))];
+  const box = el('calendar');
+  if (months.length < 2) {
+    box.innerHTML = '';
+    return;
+  }
+
+  const m = CAL_METRICS.find(x => x.field === calMetric) ?? CAL_METRICS[0];
+  const byDate = new Map(rows.map(r => [r.date, r]));
+  const scale = calScale(m, rows.map(r => r[m.field]));
+  const unit = unitOf(prefixOf(m.field));
+  const days = oneTo(31);
+
+  const head = `<div></div>${days.map(d => `<div class="cal-head">${d}</div>`).join('')}`;
+  const body = months.map(ym => {
+    const [y, mo] = ym.split('-').map(Number);
+    const inMonth = new Date(y, mo, 0).getDate();
+    const cells = days.map(d => {
+      if (d > inMonth) return '<div></div>';
+      const date = `${ym}-${String(d).padStart(2, '0')}`;
+      const r = byDate.get(date);
+      if (!r) return gaps.has(date) ? `<div class="cal-day cal-missing" title="${date} · missing"></div>` : '<div></div>';
+      const v = r[m.field];
+      return `<div class="cal-day" data-date="${date}" style="background:${scale.color(v)}"
+        title="${date} · ${v} ${unit}"></div>`;
+    });
+    return `<div class="cal-month">${MONTH_NAMES[mo - 1]} ${String(y).slice(2)}</div>${cells.join('')}`;
+  }).join('');
+
+  box.innerHTML = cardWell({
+    cls: 'mb-3',
+    body: `<div class="d-flex align-items-center gap-3 mb-2 flex-wrap">
+        <h6 class="card-title text-muted mb-0">Calendar</h6>
+        <span id="cal-picker"></span>
+        <div class="cal-legend ms-auto small text-muted">
+          <div class="cal-legend-bar" style="background:linear-gradient(to right, ${scale.gradient})"></div>
+          <div class="d-flex justify-content-between">${scale.ticks.map(t => `<span>${t}</span>`).join('')}</div>
+        </div>
+      </div>
+      <div class="cal-grid">${head}${body}</div>`,
+  });
+
+  el('cal-picker').append(mkSelect(
+    CAL_METRICS.map(x => ({ value: x.field, label: x.label })),
+    m.field,
+    function (this: HTMLSelectElement) {
+      calMetric = this.value as Measure;
+      writeStore('calMetric', calMetric);
+      renderCalendar(calRows, calMissing);
+    },
+  ));
+}
+
+// A day cell opens that date in the Day period. Delegated, so the listener
+// survives every redraw of the grid.
+el('calendar').addEventListener('click', e => {
+  const date = (e.target as HTMLElement).dataset?.date;
+  if (!date) return;
+  period = 'day';
+  renderPeriodTabs();
+  renderControls();
+  const [picker] = selectsIn(el('controls'));
+  picker.value = date;
+  load();
+  window.scrollTo({ top: 0 });
+});
+
 // --- Import button ---
 const importBtn = el('btn-import') as HTMLButtonElement;
 importBtn.addEventListener('click', async () => {
@@ -1206,17 +1434,19 @@ const deltaCell = (diff: number | null, fmt: (n: number) => string): string =>
 
 /**
  * A comparison summary table: one row per metric, one column per thing being
- * compared, and a trailing signed difference between the first column and the
- * last. Both comparison views are exactly this — mine-vs-Baar over two columns,
+ * compared, and trailing signed differences between pairs of those columns. Both comparison views are exactly this — mine-vs-Baar over two columns,
  * year-over-year over one per year — and each spelled out the same header
  * assembly, the same row assembly, the same em dash for a missing figure and the
  * same "only when both ends are there" guard around its difference.
  *
- * `delta.of` is the caller's because the two take the difference in opposite
+ * Each delta names the two columns it compares by index (-1 for the last) and
+ * takes the difference itself, because the views take it in opposite
  * directions (mine − theirs; latest − earliest) and only one of them rounds;
- * it is handed both ends already known to be present, which is the part that
- * was written twice.
+ * `of` is handed both ends already known to be present.
  */
+/** A difference column: columns `pair[0]` and `pair[1]` (-1 = last), combined by `of`. */
+interface Delta { head: string; pair: [number, number]; of: (a: number, b: number) => number }
+
 function renderDeltaTable<T>(
   id: string,
   o: {
@@ -1228,25 +1458,25 @@ function renderDeltaTable<T>(
     values: (m: T) => (number | null)[];
     /** How this metric's numbers read — the unit differs per row in one view. */
     format: (m: T) => (n: number) => string;
-    /** The difference column, or null when there is nothing to compare against. */
-    delta: { head: string; of: (first: number, latest: number) => number } | null;
+    /** The difference columns; empty when there is nothing to compare against. */
+    deltas: Delta[];
   },
 ): void {
-  const { delta } = o;
   fillTable(
     id,
-    ['Metric', ...o.columns, ...(delta ? [delta.head] : [])],
+    ['Metric', ...o.columns, ...o.deltas.map(d => d.head)],
     o.metrics,
     m => {
       const values = o.values(m);
       const fmt = o.format(m);
-      const first = values[0];
-      const latest = last(values);
-      const diff = delta && first != null && latest != null ? delta.of(first, latest) : null;
+      const at = (i: number) => values[i < 0 ? values.length + i : i] ?? null;
       return tr([
         td(o.label(m)),
         ...values.map(v => numCell(v, fmt)),
-        ...(delta ? [deltaCell(diff, fmt)] : []),
+        ...o.deltas.map(d => {
+          const [a, b] = [at(d.pair[0]), at(d.pair[1])];
+          return deltaCell(a != null && b != null ? d.of(a, b) : null, fmt);
+        }),
       ]);
     },
   );
@@ -1260,7 +1490,7 @@ function renderDeltaTable<T>(
 // click handlers) that all had to name the same view.
 const OVERLAYS = [
   { name: 'compare', show: () => loadCompare() },
-  { name: 'yoy', show: () => { renderYoyControls(); loadYoy(); } },
+  { name: 'yoy', show: () => { renderYoyControls(); loadYoy(); loadYtd(); } },
 ] as const;
 
 /** An overlay's navbar button — named after the overlay, as its view already is. */
@@ -1322,7 +1552,9 @@ async function loadCompare(): Promise<void> {
   const to = last(lastRows)!.date;
   el('cmp-range').textContent = `${from} → ${to}`;
 
-  const data = await loadInto<{ mine: WeatherRow[]; public: PublicRow[] }>(
+  const data = await loadInto<{
+    mine: WeatherRow[]; public: PublicRow[]; normals: PublicRow[]; normals_label: string;
+  }>(
     status, api('compare', { from, to }),
     'Loading public data…', 'Could not fetch public data',
   );
@@ -1337,6 +1569,18 @@ async function loadCompare(): Promise<void> {
       values: key => lastRows.map(r => pub.get(r.date)?.[key] ?? null),
     },
   ];
+
+  // The long-term normal is a third side when the server could supply it —
+  // it can't on a first use while offline, and the comparison stands without.
+  const normals = new Map<string, PublicRow>(data.normals.map(n => [n.date, n]));
+  if (normals.size) {
+    sides.push({
+      name: 'Normal', head: 'Normal', color: HUE.gray, extra: { borderDash: [2, 3], pointRadius: 0 },
+      values: key => lastRows.map(r => normals.get(r.date)?.[key] ?? null),
+    });
+  }
+  el('cmp-range').textContent = `${from} → ${to}` +
+    (normals.size ? ` · Normal: Baar ${data.normals_label}` : ' · Long-term normal unavailable');
 
   // Lines name their measure ("Me · High"); the bar chart has only one.
   drawCharts(COMPARE_VIEW, labels(lastRows), (m, type) =>
@@ -1361,7 +1605,14 @@ function renderCompareSummary(sides: CompareSide[]): void {
     label: m => cmpHeading(m.row, m.key),
     values: m => sides.map(s => avg(s.values(m.key))),
     format: () => one,
-    delta: { head: 'Difference', of: (mine, theirs) => mine - theirs },
+    // Mine against Baar, then — when the normals loaded — each against the
+    // long-term normal: the "warmer / wetter than usual" reading.
+    deltas: ([
+      ['Me − Baar', 0, 1],
+      ...(sides.length > 2 ? [['Me vs normal', 0, 2], ['Baar vs normal', 1, 2]] : []),
+    ] as [string, number, number][]).map(([head, a, b]): Delta => ({
+      head, pair: [a, b], of: (x, y) => x - y,
+    })),
   });
 }
 
@@ -1425,9 +1676,11 @@ type YoyUnit = keyof typeof YOY_UNITS;
 /** The Across-Years view's value pickers — the unit selector sits beside them. */
 const YOY_STRIP = stripsIn('yoy-controls', YOY_UNITS);
 
-// A distinct, cycled colour per year across all the charts.
+// A distinct colour per year across all the charts. Keyed by the year itself,
+// not its position in a reply: the unit charts omit a year with no data for the
+// period, and indexing by position then repainted every later year.
 const YEAR_COLORS = [HUE.sky, HUE.orange, HUE.green, HUE.pink, HUE.amber, HUE.violet];
-const yearColor = (i: number) => YEAR_COLORS[i % YEAR_COLORS.length];
+const yearColor = (year: number) => YEAR_COLORS[year % YEAR_COLORS.length];
 
 // One chart per metric; each draws one line (or bar) per year. `get` reads the
 // plotted value from a row — a function, not a key, so derived measures like
@@ -1467,6 +1720,10 @@ const YOY_SUMMARY: { label: string; prefix: string; key: string }[] = [
   { label: 'Precip total', prefix: 'precip', key: 'total' },
   { label: 'Rain days',    prefix: 'rain',   key: 'days' },
   { label: 'Rain days %',  prefix: 'rain',   key: 'pct' },
+  { label: 'Longest wet spell', prefix: 'spell', key: 'wet' },
+  { label: 'Longest dry spell', prefix: 'spell', key: 'dry' },
+  { label: 'Frost days',   prefix: 'frost',  key: 'frost' },
+  { label: 'Summer days',  prefix: 'summer', key: 'summer' },
 ];
 
 // The current comparison unit; its value pickers are rebuilt when it changes.
@@ -1526,7 +1783,7 @@ async function loadYoy(): Promise<void> {
         type,
         String(yb.year),
         positions.map(p => { const row = byPos[i].get(p); return row ? metric.get(row) : null; }),
-        yearColor(i),
+        yearColor(yb.year),
       )));
 
   renderYoySummary(data);
@@ -1545,13 +1802,84 @@ function renderYoySummary(data: YoyResponse): void {
     format: m => v => statText(m.prefix, m.key, v),
     // With ≥2 years, a trailing column shows the change from the earliest to the
     // latest year — the headline "how did this period differ" number.
-    delta:
+    deltas:
       data.years.length >= 2
-        ? {
+        ? [{
             head: 'Δ latest−earliest',
+            pair: [0, -1],
             of: (earliest, latest) => round(latest - earliest),
-          }
-        : null,
+          }]
+        : [],
+  });
+}
+
+// --- Year-to-date precipitation ---
+// Each year's running rain total on one Jan–Dec axis, so "is this a wet year?"
+// reads at a glance. Independent of the unit pickers above it: it always spans
+// whole years. A year whose record starts mid-year accumulates from its first
+// recorded day, and the note under the heading says so.
+interface YtdYear { year: number; days: { md: string; total: number }[] }
+
+const YTD_CHART = 'ytd-chart';
+
+/** Every MM-DD of a leap year — the shared x-axis, so 29 Feb has a slot. */
+const YTD_AXIS: string[] = Array.from({ length: 366 }, (_, i) =>
+  new Date(Date.UTC(2024, 0, 1 + i)).toISOString().slice(5, 10));
+
+/** "Sep 27" for "09-27". */
+const mdLabel = (md: string) => `${MONTH_NAMES[Number(md.slice(0, 2)) - 1]} ${Number(md.slice(3))}`;
+
+function renderYtdShell(): void {
+  setHtml('yoy-ytd', cardWell({
+    cls: 'mb-3',
+    body: `<h6 class="card-title text-muted mb-1">${withUnit('Year-to-date precipitation', 'precip')}</h6>
+      <div id="ytd-note" class="small text-muted mb-2"></div>
+      <canvas id="${YTD_CHART}" height="60"></canvas>`,
+  }));
+}
+
+async function loadYtd(): Promise<void> {
+  let years: YtdYear[];
+  try {
+    ({ years } = await fetchJson<{ years: YtdYear[] }>('/api/precip-ytd'));
+  } catch (e) {
+    el('ytd-note').textContent = `Could not load: ${(e as Error).message}`;
+    return;
+  }
+  if (!years.length) {
+    el('ytd-note').textContent = 'No data yet.';
+    destroyChart(YTD_CHART);
+    return;
+  }
+
+  // The headline comparison: every year's total as of the newest recorded
+  // day-of-year, e.g. "As of Sep 27: 2026 612 mm · 2025 98 mm (from Sep 1)".
+  const asOf = last(last(years)!.days)!.md;
+  const unit = unitOf('precip');
+  el('ytd-note').textContent = `As of ${mdLabel(asOf)}: ` + [...years].reverse().map(y => {
+    const upTo = y.days.filter(d => d.md <= asOf);
+    const total = last(upTo)?.total;
+    const partial = y.days[0].md !== '01-01' ? ` (from ${mdLabel(y.days[0].md)})` : '';
+    return total === undefined ? `${y.year} —` : `${y.year} ${total} ${unit}${partial}`;
+  }).join(' · ');
+
+  mkChart(YTD_CHART, 'line', {
+    labels: YTD_AXIS.map(mdLabel),
+    datasets: years.map(y => {
+      const at = new Map(y.days.map(d => [d.md, d.total]));
+      return series('line', String(y.year), YTD_AXIS.map(md => at.get(md) ?? null), yearColor(y.year),
+        { pointRadius: 0, tension: 0, spanGaps: true, borderWidth: 2 });
+    }),
+  }, {
+    interaction: { mode: 'index', intersect: false },
+    scales: {
+      // One tick per month, on its first day.
+      x: { ticks: { autoSkip: false, maxRotation: 0,
+        callback: (_v: unknown, i: number) => (YTD_AXIS[i].endsWith('-01') ? MONTH_NAMES[Number(YTD_AXIS[i].slice(0, 2)) - 1] : '') },
+        // …and a grid line only there, rather than one per day.
+        grid: { color: (c: { index: number }) => (YTD_AXIS[c.index]?.endsWith('-01') ? '#333' : 'transparent') } },
+      y: { min: 0 },
+    },
   });
 }
 
@@ -1564,6 +1892,7 @@ function renderYoySummary(data: YoyResponse): void {
   renderView(DASHBOARD_VIEW);
   renderView(COMPARE_VIEW);
   renderView(YOY_VIEW);
+  renderYtdShell();
   renderChartToggles();
   applyChartVisibility();   // apply persisted hidden state immediately, even before charts render
   await reloadDates();

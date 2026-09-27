@@ -22,11 +22,26 @@ server to run.
   like accumulated precipitation and the wettest day, plus a **Rain Days** card
   counting the days with any precipitation in the selected window (with their
   share of the days that have data, and the dry-day count).
+- **Climate days and spells** — MeteoSwiss frost/ice days (low / high below
+  0 °C) and summer/hot days (high of 25 / 30 °C or more), plus the longest run
+  of consecutive wet and dry days in the window (hover the card for the dates).
+- **Calendar heatmap** — for a Year or a multi-month Range, one cell per day
+  coloured by temperature (diverging around the period's mean) or precipitation;
+  click a day to open it.
+- **Missing-day indicator** — beside the chart toggles, how many days of the
+  selected period have no reading (hover for the dates). The period is clipped
+  to the span the station has records for, so days before the first reading or
+  not yet imported don't count as gaps.
 - **Interactive charts** — temperature, precipitation, humidity, pressure and
   wind rendered with Chart.js.
 - **Compare vs. a public station** — overlay your readings against
   [Open-Meteo](https://open-meteo.com/) data for a reference location
-  (Baar, CH by default) with a per-metric difference summary.
+  (Baar, CH by default) with a per-metric difference summary, plus Baar's
+  **1991–2020 long-term daily normal** (from Open-Meteo's ERA5 archive,
+  downloaded once and cached) so a period reads as warmer, colder, wetter or
+  drier than usual — for your station and for Baar.
+- **Across Years** — the same day, week or month compared year over year, with
+  a year-to-date precipitation chart overlaying each year's running rain total.
 - **One-click re-import** — drop in a fresh station export and hit **↻ Import**;
   ingestion is idempotent, so re-importing never duplicates rows.
 
@@ -62,6 +77,7 @@ PORT=8080 npm run dev
 | `npm start` | Run the compiled server (`node dist/server.js`; requires `build` first) |
 | `npm run import` | Re-parse `weather_data.txt` into `weather.db` from the CLI |
 | `npm run screenshot` | Run the Playwright verification harness (server must be up) |
+| `npm test` | Type-check and run the unit and route tests (`node:test`, offline, throwaway databases) |
 
 ## Data format
 
@@ -78,7 +94,7 @@ restart the server or click **↻ Import** in the UI.
 ## API
 
 The front end is a thin client over these routes; each period route returns
-`{ rows, stats }`.
+`{ rows, stats, coverage }` — `coverage` is `{ expected, recorded, missing }`, the period's gaps.
 
 | Route | Description |
 | --- | --- |
@@ -88,6 +104,8 @@ The front end is a thin client over these routes; each period route returns
 | `GET /api/year?year=` | A full year |
 | `GET /api/range?from=&to=` | Any inclusive date range |
 | `GET /api/compare?from=&to=` | Your data aligned with Open-Meteo for the reference location |
+| `GET /api/across-years?unit=&…` | The same day, week or month gathered from every year |
+| `GET /api/precip-ytd` | Each year's running precipitation total, one point per recorded day |
 | `GET /api/dates` | All available dates |
 | `GET /api/status` | Last import time + record count |
 | `POST /api/import` | Re-import `weather_data.txt` (idempotent) |
@@ -119,8 +137,10 @@ browser. After editing anything under `src/`, restart the dev server. Editing
 
 ## Verification
 
-There is no unit-test runner. `screenshot.ts` is the de-facto verification
-harness: it drives the running server with Playwright, asserts every period
+`npm test` runs the unit and route tests — stats, spells, climate days,
+coverage, the importer, the long-term normals and the API routes — with Node's
+built-in `node:test`, each file against its own throwaway database and with no
+network. `screenshot.ts` is the end-to-end verification harness: it drives the running server with Playwright, asserts every period
 renders with populated stat cards, captures screenshots, and **exits non-zero**
 on any console error, page error, failed same-origin request, or stat card that
 never fills in.

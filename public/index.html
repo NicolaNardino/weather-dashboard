@@ -26,10 +26,16 @@
   <div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
     <span class="text-muted small">Charts:</span>
     <div class="btn-group btn-group-sm" id="chart-toggles"></div>
+    <!-- Missing-day indicator — filled by renderCoverage in app.ts. -->
+    <span id="coverage" class="small ms-auto"></span>
   </div>
 
   <!-- Stat cards — rendered from STAT_CARDS in app.ts. -->
-  <div class="row g-3 mb-3" id="stat-cards"></div>
+  <div class="row row-cols-2 row-cols-md-3 row-cols-xl-5 g-3 mb-3" id="stat-cards"></div>
+
+  <!-- Calendar heatmap — filled by renderCalendar in app.ts when the period
+       spans two months or more; empty otherwise. -->
+  <div id="calendar"></div>
 
   <!-- The dashboard view: its chart cards (from CHART_META) and the data table
        under them, both built inside here by renderView in app.ts. -->
@@ -61,6 +67,9 @@
 
   <!-- One line per year, aligned on the same axis (from YOY_METRICS), over the
        per-year averages table, one column per year. -->
+  <!-- Year-to-date precipitation, one line per year (renderYtdShell / loadYtd). -->
+  <div id="yoy-ytd"></div>
+
   <div id="yoy"></div>
 </div>
 
