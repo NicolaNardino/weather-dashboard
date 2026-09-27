@@ -205,7 +205,22 @@ export function aggregateStats(rows: WeatherRow[]) {
     dew: triple('dew', r => r.dew_avg),
     precip: {
       total: round(sum(r => r.precip), 2),
-      rainy_days: rows.filter(r => r.precip > 0).length,
+      max:   max(r => r.precip),
     },
+    rain: rainDays(rows),
+  };
+}
+
+/**
+ * Rain days over a set of rows: a day counts as rainy when any precipitation
+ * was recorded. `pct` is their share of the days that have data (not of the
+ * calendar days in the period), so a gap in the record doesn't read as dry.
+ */
+export function rainDays(rows: WeatherRow[]) {
+  const days = rows.filter(r => r.precip > 0).length;
+  return {
+    days,
+    dry: rows.length - days,
+    pct: rows.length ? Math.round((days / rows.length) * 100) : 0,
   };
 }
