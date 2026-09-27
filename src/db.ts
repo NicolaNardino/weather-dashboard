@@ -112,26 +112,41 @@ export function queryRange(from: string, to: string): WeatherRow[] {
   );
 }
 
-/** One day as a row list — the row-list shape every other period query returns. */
-export const queryDayRows = (date: string): WeatherRow[] => queryRange(date, date);
+/** An inclusive window of calendar days, as stored `YYYY-MM-DD` keys. */
+export interface Window { from: string; to: string }
 
-/** One calendar month. Day 31 is a safe upper bound — the dates are compared as
-    strings, so a shorter month simply has no rows past its own last day. */
-export function queryMonth(year: number, month: number): WeatherRow[] {
-  return queryRange(ymd(year, month, 1), ymd(year, month, 31));
+export const dayWindow = (date: string): Window => ({ from: date, to: date });
+
+export function monthWindow(year: number, month: number): Window {
+  // Day 0 of the next month is this month's last day.
+  const last = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return { from: ymd(year, month, 1), to: ymd(year, month, last) };
 }
 
-export function queryYear(year: number): WeatherRow[] {
-  return queryRange(ymd(year, 1, 1), ymd(year, 12, 31));
-}
+export const yearWindow = (year: number): Window =>
+  ({ from: ymd(year, 1, 1), to: ymd(year, 12, 31) });
 
-export function queryWeek(year: number, week: number): WeatherRow[] {
+export function weekWindow(year: number, week: number): Window {
   // ISO week: walk back from Jan 4 (always in week 1) to that week's Monday.
   // Built in UTC to match `isoDay`, which reads the date back out that way.
   const jan4 = new Date(Date.UTC(year, 0, 4));
   const monday = addDays(jan4, -((jan4.getUTCDay() || 7) - 1) + (week - 1) * 7);
-  return queryRange(isoDay(monday), isoDay(addDays(monday, 6)));
+  return { from: isoDay(monday), to: isoDay(addDays(monday, 6)) };
 }
+
+/** The rows inside a window — every period query is one of these. */
+export const queryWindow = (w: Window): WeatherRow[] => queryRange(w.from, w.to);
+
+/** One day as a row list — the row-list shape every other period query returns. */
+export const queryDayRows = (date: string): WeatherRow[] => queryWindow(dayWindow(date));
+
+export const queryMonth = (year: number, month: number): WeatherRow[] =>
+  queryWindow(monthWindow(year, month));
+
+export const queryYear = (year: number): WeatherRow[] => queryWindow(yearWindow(year));
+
+export const queryWeek = (year: number, week: number): WeatherRow[] =>
+  queryWindow(weekWindow(year, week));
 
 /** Every stored row. Only the import needs this — it diffs against what's there. */
 export function queryAllRows(): WeatherRow[] {
@@ -285,4 +300,30 @@ export function precipYtd(): { year: number; days: { md: string; total: number }
     });
     return { year, days };
   });
+}
+
+/**
+ * How completely a window is recorded: the days it should hold, the days it
+ * does, and the dates it is missing.
+ *
+ * The window is first clipped to the span the station has records for at all
+ * (first to latest stored date), so days before the station started, and days
+ * that haven't happened or been imported yet, don't count as missing — a Year
+ * view in September isn't "missing" October to December.
+ */
+export function coverage(w: Window, rows: WeatherRow[]) {
+  const bounds = one<{ first: string | null; last: string | null }>(
+    'SELECT MIN(date) AS first, MAX(date) AS last FROM weather',
+  );
+  const from = bounds?.first && bounds.first > w.from ? bounds.first : w.from;
+  const to = bounds?.last && bounds.last < w.to ? bounds.last : w.to;
+  const have = new Set(rows.map(r => r.date));
+  const missing: string[] = [];
+  if (bounds?.first && from <= to) {
+    for (let d = new Date(`${from}T00:00:00Z`); isoDay(d) <= to; d = addDays(d, 1)) {
+      if (!have.has(isoDay(d))) missing.push(isoDay(d));
+    }
+  }
+  const expected = bounds?.first && from <= to ? dayCount(from, to) : 0;
+  return { expected, recorded: expected - missing.length, missing };
 }

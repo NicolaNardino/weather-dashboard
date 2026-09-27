@@ -747,22 +747,24 @@ async function reloadDates(): Promise<void> {
 
 // --- Load data ---
 async function load(): Promise<void> {
-  let data: { rows: WeatherRow[]; stats: Stats };
+  let data: { rows: WeatherRow[]; stats: Stats; coverage: Coverage };
   try {
     const url = api(period, PERIOD_STRIP.params(period));
-    data = await fetchJson<{ rows: WeatherRow[]; stats: Stats }>(url);
+    data = await fetchJson<typeof data>(url);
   } catch {
     // A period the server has no data for (the day route 404s) — blank the
     // dashboard rather than leaving the previous period's rows on screen.
     lastRows = [];
     clearView(DASHBOARD_VIEW);
-    renderCalendar([]);
+    renderCalendar([], []);
+    renderCoverage(null);
     return;
   }
 
   lastRows = data.rows;
   renderStats(data.stats);
-  renderCalendar(data.rows);
+  renderCoverage(data.coverage);
+  renderCalendar(data.rows, data.coverage.missing);
   renderCharts(data.rows);
   renderTable(data.rows);
 }
@@ -1142,6 +1144,38 @@ function renderTable(rows: WeatherRow[]): void {
   );
 }
 
+// --- Missing-day indicator ---
+// How completely the period is recorded, beside the chart toggles. The server
+// clips the period to the span the station has records for, so only a real gap
+// counts: days before the first recording, or not yet imported, don't.
+interface Coverage { expected: number; recorded: number; missing: string[] }
+
+/** Consecutive dates folded into runs: "2026-08-03 → 2026-08-06, 2026-09-01". */
+function dateRuns(dates: string[]): string {
+  const runs: string[][] = [];
+  for (const d of dates) {
+    const run = last(runs);
+    const prev = run && last(run);
+    const next = prev && new Date(Date.parse(`${prev}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+    if (run && next === d) run.push(d); else runs.push([d]);
+  }
+  return runs.map(r => (r.length > 1 ? `${r[0]} → ${last(r)}` : r[0])).join(', ');
+}
+
+function renderCoverage(c: Coverage | null): void {
+  const badge = el('coverage');
+  const n = c?.missing.length ?? 0;
+  badge.className = `small ms-auto ${n ? 'text-warning' : 'text-muted'}`;
+  badge.title = n ? `Missing: ${dateRuns(c!.missing)}` : '';
+  badge.textContent = !c
+    ? 'No data for this period'
+    : !c.expected
+      ? 'Outside the recorded span'
+      : n
+        ? `Missing ${n} day${n === 1 ? '' : 's'} · ${c.recorded} of ${c.expected} recorded`
+        : `All ${c.expected} day${c.expected === 1 ? '' : 's'} recorded`;
+}
+
 // --- Calendar heatmap ---
 // One row per month, one cell per day of the month, coloured by the chosen
 // measure. Shown only when the period spans two months or more (the Year
@@ -1173,8 +1207,9 @@ const CAL_COLORS = {
 };
 
 let calMetric: Measure = readStore<Measure>('calMetric', 'temp_avg');
-/** The rows the heatmap last drew, so switching the measure can redraw it. */
+/** What the heatmap last drew, so switching the measure can redraw it. */
 let calRows: WeatherRow[] = [];
+let calMissing: string[] = [];
 
 /** Blend two `#rrggbb` colours; t = 0 gives `a`, t = 1 gives `b`. */
 function mix(a: string, b: string, t: number): string {
@@ -1222,8 +1257,15 @@ function calScale(m: CalMetric, values: number[]) {
   };
 }
 
-function renderCalendar(rows: WeatherRow[]): void {
+/**
+ * `missing` is the period's coverage gaps: those days are dashed. A day with no
+ * row that isn't in it lies outside the recorded span (before the station
+ * started, or not yet imported) and is left blank, so it doesn't read as a gap.
+ */
+function renderCalendar(rows: WeatherRow[], missing: string[]): void {
   calRows = rows;
+  calMissing = missing;
+  const gaps = new Set(missing);
   const months = [...new Set(rows.map(r => r.date.slice(0, 7)))];
   const box = el('calendar');
   if (months.length < 2) {
@@ -1245,7 +1287,7 @@ function renderCalendar(rows: WeatherRow[]): void {
       if (d > inMonth) return '<div></div>';
       const date = `${ym}-${String(d).padStart(2, '0')}`;
       const r = byDate.get(date);
-      if (!r) return `<div class="cal-day cal-missing" title="${date} · no data"></div>`;
+      if (!r) return gaps.has(date) ? `<div class="cal-day cal-missing" title="${date} · missing"></div>` : '<div></div>';
       const v = r[m.field];
       return `<div class="cal-day" data-date="${date}" style="background:${scale.color(v)}"
         title="${date} · ${v} ${unit}"></div>`;
@@ -1272,7 +1314,7 @@ function renderCalendar(rows: WeatherRow[]): void {
     function (this: HTMLSelectElement) {
       calMetric = this.value as Measure;
       writeStore('calMetric', calMetric);
-      renderCalendar(calRows);
+      renderCalendar(calRows, calMissing);
     },
   ));
 }

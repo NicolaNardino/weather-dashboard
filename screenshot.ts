@@ -60,6 +60,11 @@ const STAT_READY = () => document.getElementById('s-temp-avg')?.textContent !== 
     if (empty.length) {
       failures.push(`${label}: ${empty.length} stat card(s) still empty: ${empty.map(s => s.id).join(', ')}`);
     }
+
+    // The missing-day indicator is set on every load, gaps or not.
+    const coverage = ((await page.textContent('#coverage')) ?? '').trim();
+    if (!coverage) failures.push(`${label}: missing-day indicator is empty`);
+    else console.log(`  ${label} coverage: ${coverage}`);
   }
 
   const res = await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' });

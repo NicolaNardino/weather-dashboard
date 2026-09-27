@@ -3,7 +3,8 @@ import path from 'path';
 import { dayCount, isoDay, ymd } from './dates';
 import { DATA_FILE, describeImport, importFile } from './import';
 import {
-  queryDayRows, queryWeek, queryMonth, queryYear, queryRange,
+  queryDayRows, queryWeek, queryMonth, queryRange, queryWindow, coverage, Window,
+  dayWindow, weekWindow, monthWindow, yearWindow,
   queryAllDates, queryYears, aggregateStats, getMeta, WeatherRow, precipYtd,
   queryPublicRange, upsertPublic, PublicRow, PublicField, PUBLIC_FIELDS
 } from './db';
@@ -81,7 +82,9 @@ function requireQuery<T extends string | number = string>(
 }
 
 /**
- * The period routes all share a shape: check params, query rows, add stats.
+ * The period routes all share a shape: check params, turn them into the
+ * period's calendar window, query its rows, add stats and the window's coverage
+ * (which days it is missing).
  * `emptyIs404` is the one variation — the single-day route answers 404 rather
  * than an empty period, which used to mean spelling the whole shape out again.
  *
@@ -92,15 +95,16 @@ function requireQuery<T extends string | number = string>(
  */
 function rowsRoute<T extends string | number = string>(
   names: string[],
-  rows: (q: Record<string, T>) => WeatherRow[],
+  window: (q: Record<string, T>) => Window,
   opts: { emptyIs404?: boolean; read?: (v: string | undefined) => T } = {},
 ) {
   return (req: Request, res: Response) => {
     const q = requireQuery<T>(req, res, names, opts.read);
     if (!q) return;
-    const found = rows(q);
+    const w = window(q);
+    const found = queryWindow(w);
     if (opts.emptyIs404 && !found.length) return res.status(404).json({ error: 'no data' });
-    res.json({ rows: found, stats: aggregateStats(found) });
+    res.json({ rows: found, stats: aggregateStats(found), coverage: coverage(w, found) });
   };
 }
 
@@ -250,11 +254,11 @@ app.get('/api/precip-ytd', (_req, res) => {
  *   range  ?from=YYYY-MM-DD&to=YYYY-MM-DD
  */
 const PERIOD_ROUTES = {
-  day: rowsRoute(['date'], q => queryDayRows(q.date), { emptyIs404: true }),
-  week: rowsRoute(['year', 'week'], q => queryWeek(q.year, q.week), { read: Number }),
-  month: rowsRoute(['year', 'month'], q => queryMonth(q.year, q.month), { read: Number }),
-  year: rowsRoute(['year'], q => queryYear(q.year), { read: Number }),
-  range: rowsRoute(['from', 'to'], q => queryRange(q.from, q.to)),
+  day: rowsRoute(['date'], q => dayWindow(q.date), { emptyIs404: true }),
+  week: rowsRoute(['year', 'week'], q => weekWindow(q.year, q.week), { read: Number }),
+  month: rowsRoute(['year', 'month'], q => monthWindow(q.year, q.month), { read: Number }),
+  year: rowsRoute(['year'], q => yearWindow(q.year), { read: Number }),
+  range: rowsRoute(['from', 'to'], q => ({ from: q.from, to: q.to })),
 };
 
 for (const [period, handler] of Object.entries(PERIOD_ROUTES)) {

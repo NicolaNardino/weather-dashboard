@@ -28,6 +28,10 @@ server to run.
 - **Calendar heatmap** — for a Year or a multi-month Range, one cell per day
   coloured by temperature (diverging around the period's mean) or precipitation;
   click a day to open it.
+- **Missing-day indicator** — beside the chart toggles, how many days of the
+  selected period have no reading (hover for the dates). The period is clipped
+  to the span the station has records for, so days before the first reading or
+  not yet imported don't count as gaps.
 - **Interactive charts** — temperature, precipitation, humidity, pressure and
   wind rendered with Chart.js.
 - **Compare vs. a public station** — overlay your readings against
@@ -86,7 +90,7 @@ restart the server or click **↻ Import** in the UI.
 ## API
 
 The front end is a thin client over these routes; each period route returns
-`{ rows, stats }`.
+`{ rows, stats, coverage }` — `coverage` is `{ expected, recorded, missing }`, the period's gaps.
 
 | Route | Description |
 | --- | --- |
