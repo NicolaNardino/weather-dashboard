@@ -1,12 +1,14 @@
 import express, { Request, Response } from 'express';
 import path from 'path';
-import { dayCount, isoDay, ymd } from './dates';
+import { dayCount, eachDay, isoDay, ymd } from './dates';
+import { computeNormals, MD_AXIS, NormalRow, NORMALS_PERIOD } from './normals';
 import { DATA_FILE, describeImport, importFile } from './import';
 import {
   queryDayRows, queryWeek, queryMonth, queryRange, queryWindow, coverage, Window,
   dayWindow, weekWindow, monthWindow, yearWindow,
   queryAllDates, queryYears, aggregateStats, getMeta, WeatherRow, precipYtd,
-  queryPublicRange, upsertPublic, PublicRow, PublicField, PUBLIC_FIELDS
+  queryPublicRange, upsertPublic, PublicRow, PublicField, PUBLIC_FIELDS,
+  queryNormals, upsertNormals,
 } from './db';
 
 // Baar, Canton Zug, Switzerland — reference location for the public comparison.
@@ -29,14 +31,24 @@ const OPEN_METEO_DAILY: Record<PublicField, string> = {
   precip: 'precipitation_sum',
 };
 
+/** Open-Meteo's two daily endpoints: recent days and forecasts, and the ERA5
+    reanalysis archive going back to 1940 that the long-term normals come from. */
+const OPEN_METEO = {
+  forecast: 'https://api.open-meteo.com/v1/forecast',
+  archive: 'https://archive-api.open-meteo.com/v1/archive',
+};
+
 // Fetch daily data for Baar from Open-Meteo, normalized to PublicRow[].
-async function fetchOpenMeteo(from: string, to: string): Promise<PublicRow[]> {
+async function fetchOpenMeteo(
+  from: string, to: string, base: string = OPEN_METEO.forecast,
+): Promise<PublicRow[]> {
   const url =
-    `https://api.open-meteo.com/v1/forecast?latitude=${BAAR.lat}&longitude=${BAAR.lon}` +
+    `${base}?latitude=${BAAR.lat}&longitude=${BAAR.lon}` +
     `&daily=${Object.values(OPEN_METEO_DAILY).join(',')}` +
     `&timezone=Europe%2FZurich&start_date=${from}&end_date=${to}`;
 
-  const r = await fetch(url);
+  // A timeout, so an unreachable service fails the request instead of stalling it.
+  const r = await fetch(url, { signal: AbortSignal.timeout(20_000) });
   if (!r.ok) throw new Error(`Open-Meteo responded ${r.status}`);
   const j = (await r.json()) as { daily?: Record<string, unknown[]> };
   const d = j.daily ?? {};
@@ -51,6 +63,36 @@ async function fetchOpenMeteo(from: string, to: string): Promise<PublicRow[]> {
       [f, (d[OPEN_METEO_DAILY[f]] as number[] | undefined)?.[i] ?? null],
     )),
   })) as PublicRow[];
+}
+
+/** The one in-flight normals download, shared by concurrent requests. */
+let normalsLoading: Promise<NormalRow[]> | null = null;
+/** When the last download failed: offline, don't retry on every Compare view. */
+let normalsFailedAt = 0;
+const NORMALS_RETRY_MS = 10 * 60_000;
+
+/**
+ * Baar's long-term daily normals, from the local cache when it is complete —
+ * otherwise downloaded once from the ERA5 archive (30 years of daily data in one
+ * request), reduced to one row per calendar day, and cached for good: a normal
+ * never changes, so after the first Compare view this never touches the network.
+ */
+async function baarNormals(): Promise<NormalRow[]> {
+  const cached = queryNormals(BAAR.label);
+  if (cached.length === MD_AXIS.length) return cached;
+  if (Date.now() - normalsFailedAt < NORMALS_RETRY_MS) throw new Error('normals download failed recently');
+  normalsLoading ??= (async () => {
+    try {
+      const rows = await fetchOpenMeteo(NORMALS_PERIOD.from, NORMALS_PERIOD.to, OPEN_METEO.archive);
+      const normals = computeNormals(rows);
+      upsertNormals(BAAR.label, normals);
+      return normals;
+    } catch (err) {
+      normalsFailedAt = Date.now();
+      throw err;
+    }
+  })().finally(() => { normalsLoading = null; });
+  return normalsLoading;
 }
 
 /** The default reader: the param as given, an absent one as ''. */
@@ -168,6 +210,18 @@ app.get('/api/compare', async (req, res) => {
   if (!q) return;
   const { from, to } = q;
 
+  // The long-term normal for each day of the window. They are optional: if
+  // they can't be had (first use while offline), the comparison still works.
+  const normals = await baarNormals().catch(err => {
+    console.warn('Could not load long-term normals:', err);
+    return [] as NormalRow[];
+  });
+  const byMd = new Map(normals.map(n => [n.md, n]));
+  const normalRows = eachDay(from, to).flatMap(date => {
+    const n = byMd.get(date.slice(5));
+    return n ? [{ date, ...Object.fromEntries(PUBLIC_FIELDS.map(f => [f, n[f]])) } as PublicRow] : [];
+  });
+
   // Every reply pairs my rows with the public ones over the same window.
   const reply = (pub: PublicRow[], opts: { cached: boolean; stale?: boolean }) =>
     res.json({
@@ -177,6 +231,8 @@ app.get('/api/compare', async (req, res) => {
       ...(opts.stale ? { stale: true } : {}),
       mine: queryRange(from, to),
       public: pub,
+      normals: normalRows,
+      normals_label: NORMALS_PERIOD.label,
     });
 
   const today = isoDay(new Date());
@@ -274,7 +330,9 @@ app.post('/api/import', (_req, res) => {
   }
 });
 
-app.listen(PORT, () => {
+// Started as the process entry point only, so the tests can import `app` and
+// listen on a port of their own.
+if (require.main === module) app.listen(PORT, () => {
   console.log(`Weather dashboard running at http://localhost:${PORT}`);
   // Auto-import on startup so fresh data is always loaded
   try {
@@ -284,3 +342,5 @@ app.listen(PORT, () => {
     console.warn('Could not auto-import weather_data.txt:', err);
   }
 });
+
+export { app };

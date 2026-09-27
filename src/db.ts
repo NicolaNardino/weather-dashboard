@@ -1,8 +1,10 @@
 import { DatabaseSync } from 'node:sqlite';
 import path from 'path';
-import { addDays, dayCount, isoDay, ymd } from './dates';
+import { addDays, dayCount, eachDay, isoDay, ymd } from './dates';
+import type { NormalRow } from './normals';
 
-const DB_PATH = path.join(process.cwd(), 'weather.db');
+// WEATHER_DB lets the tests point the app at a throwaway database.
+const DB_PATH = process.env.WEATHER_DB ?? path.join(process.cwd(), 'weather.db');
 
 /**
  * The 15 measure columns, in the order they appear in weather_data.txt after
@@ -66,6 +68,17 @@ function getDb(): DatabaseSync {
         ${PUBLIC_FIELDS.map(f => `${f} REAL`).join(', ')},
         fetched_at TEXT,
         PRIMARY KEY (location, date)
+      )
+    `);
+    // Long-term daily normals per location, keyed by calendar day (MM-DD).
+    // Computed once from a 30-year archive download (see normals.ts), so the
+    // Compare view's reference line costs one fetch ever, not one per view.
+    _db.exec(`
+      CREATE TABLE IF NOT EXISTS public_normals (
+        location TEXT NOT NULL,
+        md       TEXT NOT NULL,
+        ${PUBLIC_FIELDS.map(f => `${f} REAL`).join(', ')},
+        PRIMARY KEY (location, md)
       )
     `);
   }
@@ -184,6 +197,18 @@ export function upsertPublic(location: string, rows: PublicRow[]): void {
   for (const r of rows) {
     stmt.run(location, r.date, ...PUBLIC_FIELDS.map(f => r[f]), now);
   }
+}
+
+export function queryNormals(location: string): NormalRow[] {
+  return all<NormalRow>(
+    `SELECT md, ${PUBLIC_FIELDS.join(', ')} FROM public_normals WHERE location = ? ORDER BY md`,
+    location,
+  );
+}
+
+export function upsertNormals(location: string, rows: NormalRow[]): void {
+  const stmt = upsertStmt('public_normals', ['location', 'md', ...PUBLIC_FIELDS]);
+  for (const r of rows) stmt.run(location, r.md, ...PUBLIC_FIELDS.map(f => r[f]));
 }
 
 export function aggregateStats(rows: WeatherRow[]) {
@@ -318,12 +343,8 @@ export function coverage(w: Window, rows: WeatherRow[]) {
   const from = bounds?.first && bounds.first > w.from ? bounds.first : w.from;
   const to = bounds?.last && bounds.last < w.to ? bounds.last : w.to;
   const have = new Set(rows.map(r => r.date));
-  const missing: string[] = [];
-  if (bounds?.first && from <= to) {
-    for (let d = new Date(`${from}T00:00:00Z`); isoDay(d) <= to; d = addDays(d, 1)) {
-      if (!have.has(isoDay(d))) missing.push(isoDay(d));
-    }
-  }
-  const expected = bounds?.first && from <= to ? dayCount(from, to) : 0;
+  const days = bounds?.first ? eachDay(from, to) : [];
+  const missing = days.filter(d => !have.has(d));
+  const expected = days.length;
   return { expected, recorded: expected - missing.length, missing };
 }

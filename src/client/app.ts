@@ -955,6 +955,7 @@ const HUE = {
   indigo: '#818cf8',
   violet: '#a78bfa',
   pink: '#f472b6',
+  gray: '#9ca3af',
 } as const;
 
 // --- The dashboard charts ---
@@ -1433,17 +1434,19 @@ const deltaCell = (diff: number | null, fmt: (n: number) => string): string =>
 
 /**
  * A comparison summary table: one row per metric, one column per thing being
- * compared, and a trailing signed difference between the first column and the
- * last. Both comparison views are exactly this — mine-vs-Baar over two columns,
+ * compared, and trailing signed differences between pairs of those columns. Both comparison views are exactly this — mine-vs-Baar over two columns,
  * year-over-year over one per year — and each spelled out the same header
  * assembly, the same row assembly, the same em dash for a missing figure and the
  * same "only when both ends are there" guard around its difference.
  *
- * `delta.of` is the caller's because the two take the difference in opposite
+ * Each delta names the two columns it compares by index (-1 for the last) and
+ * takes the difference itself, because the views take it in opposite
  * directions (mine − theirs; latest − earliest) and only one of them rounds;
- * it is handed both ends already known to be present, which is the part that
- * was written twice.
+ * `of` is handed both ends already known to be present.
  */
+/** A difference column: columns `pair[0]` and `pair[1]` (-1 = last), combined by `of`. */
+interface Delta { head: string; pair: [number, number]; of: (a: number, b: number) => number }
+
 function renderDeltaTable<T>(
   id: string,
   o: {
@@ -1455,25 +1458,25 @@ function renderDeltaTable<T>(
     values: (m: T) => (number | null)[];
     /** How this metric's numbers read — the unit differs per row in one view. */
     format: (m: T) => (n: number) => string;
-    /** The difference column, or null when there is nothing to compare against. */
-    delta: { head: string; of: (first: number, latest: number) => number } | null;
+    /** The difference columns; empty when there is nothing to compare against. */
+    deltas: Delta[];
   },
 ): void {
-  const { delta } = o;
   fillTable(
     id,
-    ['Metric', ...o.columns, ...(delta ? [delta.head] : [])],
+    ['Metric', ...o.columns, ...o.deltas.map(d => d.head)],
     o.metrics,
     m => {
       const values = o.values(m);
       const fmt = o.format(m);
-      const first = values[0];
-      const latest = last(values);
-      const diff = delta && first != null && latest != null ? delta.of(first, latest) : null;
+      const at = (i: number) => values[i < 0 ? values.length + i : i] ?? null;
       return tr([
         td(o.label(m)),
         ...values.map(v => numCell(v, fmt)),
-        ...(delta ? [deltaCell(diff, fmt)] : []),
+        ...o.deltas.map(d => {
+          const [a, b] = [at(d.pair[0]), at(d.pair[1])];
+          return deltaCell(a != null && b != null ? d.of(a, b) : null, fmt);
+        }),
       ]);
     },
   );
@@ -1549,7 +1552,9 @@ async function loadCompare(): Promise<void> {
   const to = last(lastRows)!.date;
   el('cmp-range').textContent = `${from} → ${to}`;
 
-  const data = await loadInto<{ mine: WeatherRow[]; public: PublicRow[] }>(
+  const data = await loadInto<{
+    mine: WeatherRow[]; public: PublicRow[]; normals: PublicRow[]; normals_label: string;
+  }>(
     status, api('compare', { from, to }),
     'Loading public data…', 'Could not fetch public data',
   );
@@ -1564,6 +1569,18 @@ async function loadCompare(): Promise<void> {
       values: key => lastRows.map(r => pub.get(r.date)?.[key] ?? null),
     },
   ];
+
+  // The long-term normal is a third side when the server could supply it —
+  // it can't on a first use while offline, and the comparison stands without.
+  const normals = new Map<string, PublicRow>(data.normals.map(n => [n.date, n]));
+  if (normals.size) {
+    sides.push({
+      name: 'Normal', head: 'Normal', color: HUE.gray, extra: { borderDash: [2, 3], pointRadius: 0 },
+      values: key => lastRows.map(r => normals.get(r.date)?.[key] ?? null),
+    });
+  }
+  el('cmp-range').textContent = `${from} → ${to}` +
+    (normals.size ? ` · Normal: Baar ${data.normals_label}` : ' · Long-term normal unavailable');
 
   // Lines name their measure ("Me · High"); the bar chart has only one.
   drawCharts(COMPARE_VIEW, labels(lastRows), (m, type) =>
@@ -1588,7 +1605,14 @@ function renderCompareSummary(sides: CompareSide[]): void {
     label: m => cmpHeading(m.row, m.key),
     values: m => sides.map(s => avg(s.values(m.key))),
     format: () => one,
-    delta: { head: 'Difference', of: (mine, theirs) => mine - theirs },
+    // Mine against Baar, then — when the normals loaded — each against the
+    // long-term normal: the "warmer / wetter than usual" reading.
+    deltas: ([
+      ['Me − Baar', 0, 1],
+      ...(sides.length > 2 ? [['Me vs normal', 0, 2], ['Baar vs normal', 1, 2]] : []),
+    ] as [string, number, number][]).map(([head, a, b]): Delta => ({
+      head, pair: [a, b], of: (x, y) => x - y,
+    })),
   });
 }
 
@@ -1778,13 +1802,14 @@ function renderYoySummary(data: YoyResponse): void {
     format: m => v => statText(m.prefix, m.key, v),
     // With ≥2 years, a trailing column shows the change from the earliest to the
     // latest year — the headline "how did this period differ" number.
-    delta:
+    deltas:
       data.years.length >= 2
-        ? {
+        ? [{
             head: 'Δ latest−earliest',
+            pair: [0, -1],
             of: (earliest, latest) => round(latest - earliest),
-          }
-        : null,
+          }]
+        : [],
   });
 }
 
