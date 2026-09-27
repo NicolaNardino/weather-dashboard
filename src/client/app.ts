@@ -1071,14 +1071,23 @@ interface TableColumn {
   cls?: string | ((r: WeatherRow) => string);
 }
 
+/**
+ * A humidity reading as this table prints it — the one measure here that carries
+ * its unit, the rest being bare numbers under a labelled column. The unit comes
+ * from the stat card that already names it (see `unitOf`), rather than being
+ * written out again per column: '%' was the last unit left as a literal outside
+ * STAT_CARDS, in the three cells below.
+ */
+const humCell = (v: number) => `${v}${unitOf('hum')}`;
+
 const TABLE_COLUMNS: TableColumn[] = [
   { label: 'Date',      cell: r => r.date },
   { label: 'T High',    cell: r => r.temp_high, cls: 'text-danger' },
   { label: 'T Avg',     cell: r => r.temp_avg },
   { label: 'T Low',     cell: r => r.temp_low,  cls: 'text-info' },
-  { label: 'Hum High',  cell: r => `${r.hum_high}%`, cls: 'text-danger' },
-  { label: 'Hum Avg',   cell: r => `${r.hum_avg}%` },
-  { label: 'Hum Low',   cell: r => `${r.hum_low}%`,  cls: 'text-info' },
+  { label: 'Hum High',  cell: r => humCell(r.hum_high), cls: 'text-danger' },
+  { label: 'Hum Avg',   cell: r => humCell(r.hum_avg) },
+  { label: 'Hum Low',   cell: r => humCell(r.hum_low),  cls: 'text-info' },
   { label: 'Wind High', cell: r => r.wind_high, cls: 'text-warning' },
   { label: 'Wind Avg',  cell: r => r.wind_avg },
   { label: 'Pres High', cell: r => r.pres_high },
