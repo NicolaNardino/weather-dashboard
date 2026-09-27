@@ -22,11 +22,11 @@ npm run import       # ts-node src/import.ts — re-parse weather_data.txt into 
 npm run screenshot   # ts-node --transpile-only screenshot.ts — the verification harness (server must be up)
 ```
 
-There is **no test runner or linter configured**. `screenshot.ts` is the de-facto verification harness: it drives the running server with Playwright, asserts every period renders with populated stat cards, captures `dashboard*.png`, and **exits non-zero** on any console error, page error, failed same-origin request, or empty stat card. Run it against a live server:
+There is **no test runner or linter configured**. `screenshot.ts` is the de-facto verification harness: it drives the running server with Playwright, asserts every period renders with populated stat cards, checks the Year period draws the calendar heatmap and Across Years draws the year-to-date rain chart, captures `dashboard*.png`, and **exits non-zero** on any console error, page error, failed same-origin request, or empty stat card. Run it against a live server:
 
 ```bash
 npm run dev &        # server must be up first
-npm run screenshot   # writes dashboard.png / dashboard-month.png / dashboard-year.png
+npm run screenshot   # writes dashboard.png / -month / -year / -yoy .png
 ```
 
 Playwright needs its browser installed once: `npx playwright install chromium`. Scripts that `import 'playwright'` must run from the project root so `node_modules` resolves. Two env vars help in constrained environments: `PLAYWRIGHT_CHROMIUM_PATH` points the harness at an already-installed browser (when Playwright's CDN is unreachable), and `DASHBOARD_URL` overrides `http://localhost:3000`.

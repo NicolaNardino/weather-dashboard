@@ -22,11 +22,19 @@ server to run.
   like accumulated precipitation and the wettest day, plus a **Rain Days** card
   counting the days with any precipitation in the selected window (with their
   share of the days that have data, and the dry-day count).
+- **Climate days and spells** — MeteoSwiss frost/ice days (low / high below
+  0 °C) and summer/hot days (high of 25 / 30 °C or more), plus the longest run
+  of consecutive wet and dry days in the window (hover the card for the dates).
+- **Calendar heatmap** — for a Year or a multi-month Range, one cell per day
+  coloured by temperature (diverging around the period's mean) or precipitation;
+  click a day to open it.
 - **Interactive charts** — temperature, precipitation, humidity, pressure and
   wind rendered with Chart.js.
 - **Compare vs. a public station** — overlay your readings against
   [Open-Meteo](https://open-meteo.com/) data for a reference location
   (Baar, CH by default) with a per-metric difference summary.
+- **Across Years** — the same day, week or month compared year over year, with
+  a year-to-date precipitation chart overlaying each year's running rain total.
 - **One-click re-import** — drop in a fresh station export and hit **↻ Import**;
   ingestion is idempotent, so re-importing never duplicates rows.
 
@@ -88,6 +96,8 @@ The front end is a thin client over these routes; each period route returns
 | `GET /api/year?year=` | A full year |
 | `GET /api/range?from=&to=` | Any inclusive date range |
 | `GET /api/compare?from=&to=` | Your data aligned with Open-Meteo for the reference location |
+| `GET /api/across-years?unit=&…` | The same day, week or month gathered from every year |
+| `GET /api/precip-ytd` | Each year's running precipitation total, one point per recorded day |
 | `GET /api/dates` | All available dates |
 | `GET /api/status` | Last import time + record count |
 | `POST /api/import` | Re-import `weather_data.txt` (idempotent) |

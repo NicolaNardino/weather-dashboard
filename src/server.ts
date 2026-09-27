@@ -4,7 +4,7 @@ import { dayCount, isoDay, ymd } from './dates';
 import { DATA_FILE, describeImport, importFile } from './import';
 import {
   queryDayRows, queryWeek, queryMonth, queryYear, queryRange,
-  queryAllDates, queryYears, aggregateStats, getMeta, WeatherRow,
+  queryAllDates, queryYears, aggregateStats, getMeta, WeatherRow, precipYtd,
   queryPublicRange, upsertPublic, PublicRow, PublicField, PUBLIC_FIELDS
 } from './db';
 
@@ -227,6 +227,13 @@ app.get('/api/across-years', (req, res) => {
     .map(x => ({ ...x, stats: aggregateStats(x.rows) }));
 
   res.json({ unit, label: spec.label(q), years });
+});
+
+// GET /api/precip-ytd — the running precipitation total through each year that
+// has data, one point per recorded day ({ md: 'MM-DD', total }), so the years
+// can be overlaid on a shared Jan–Dec axis.
+app.get('/api/precip-ytd', (_req, res) => {
+  res.json({ years: precipYtd() });
 });
 
 /**

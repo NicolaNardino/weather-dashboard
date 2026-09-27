@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import path from 'path';
-import { addDays, isoDay, ymd } from './dates';
+import { addDays, dayCount, isoDay, ymd } from './dates';
 
 const DB_PATH = path.join(process.cwd(), 'weather.db');
 
@@ -208,8 +208,16 @@ export function aggregateStats(rows: WeatherRow[]) {
       max:   max(r => r.precip),
     },
     rain: rainDays(rows),
+    climate: climateDays(rows),
+    spells: {
+      wet: longestSpell(rows, isRainy),
+      dry: longestSpell(rows, r => !isRainy(r)),
+    },
   };
 }
+
+/** A rain day: any precipitation recorded. Rain days and wet/dry spells agree on it. */
+const isRainy = (r: WeatherRow): boolean => r.precip > 0;
 
 /**
  * Rain days over a set of rows: a day counts as rainy when any precipitation
@@ -217,10 +225,64 @@ export function aggregateStats(rows: WeatherRow[]) {
  * calendar days in the period), so a gap in the record doesn't read as dry.
  */
 export function rainDays(rows: WeatherRow[]) {
-  const days = rows.filter(r => r.precip > 0).length;
+  const days = rows.filter(isRainy).length;
   return {
     days,
     dry: rows.length - days,
     pct: rows.length ? Math.round((days / rows.length) * 100) : 0,
   };
+}
+
+/**
+ * The MeteoSwiss climate-day counts: frost days (low below 0 °C), ice days
+ * (high below 0 °C — every ice day is also a frost day), summer days (high of
+ * 25 °C or more) and hot days (high of 30 °C or more — also summer days).
+ */
+export function climateDays(rows: WeatherRow[]) {
+  const count = (test: (r: WeatherRow) => boolean) => rows.filter(test).length;
+  return {
+    frost:  count(r => r.temp_low < 0),
+    ice:    count(r => r.temp_high < 0),
+    summer: count(r => r.temp_high >= 25),
+    hot:    count(r => r.temp_high >= 30),
+  };
+}
+
+/** A run of consecutive days; `from`/`to` are null when no day qualified. */
+export interface Spell { days: number; from: string | null; to: string | null }
+
+/**
+ * The longest run of consecutive calendar days that all pass `test`, earliest
+ * first on a tie. A day missing from the record ends the run rather than being
+ * assumed either way. `rows` must be in date order, as every query returns them.
+ */
+export function longestSpell(rows: WeatherRow[], test: (r: WeatherRow) => boolean): Spell {
+  let best: Spell = { days: 0, from: null, to: null };
+  let start = '';
+  let len = 0;
+  let prev = '';
+  for (const r of rows) {
+    if (!test(r)) { len = 0; prev = r.date; continue; }
+    if (len && dayCount(prev, r.date) === 2) len++;
+    else { len = 1; start = r.date; }
+    prev = r.date;
+    if (len > best.days) best = { days: len, from: start, to: r.date };
+  }
+  return best;
+}
+
+/**
+ * Running precipitation total through each year, one point per recorded day:
+ * the year-to-date rain curve. A year whose record starts mid-year accumulates
+ * from its first recorded day.
+ */
+export function precipYtd(): { year: number; days: { md: string; total: number }[] }[] {
+  return queryYears().map(year => {
+    let total = 0;
+    const days = queryYear(year).map(r => {
+      total += r.precip;
+      return { md: r.date.slice(5), total: Math.round(total * 100) / 100 };
+    });
+    return { year, days };
+  });
 }

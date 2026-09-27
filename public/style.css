@@ -53,3 +53,18 @@ input[type="checkbox"]:checked {
   padding: 2px 6px;
   border-radius: 3px;
 }
+
+/* Calendar heatmap: a month label, then one column per day of the month. */
+.cal-grid {
+  display: grid;
+  grid-template-columns: 3.5rem repeat(31, minmax(0, 1fr));
+  gap: 2px;
+}
+.cal-head { font-size: 10px; color: #888; text-align: center; }
+.cal-month { font-size: 11px; color: #9aa4b8; align-self: center; white-space: nowrap; }
+.cal-day { height: 18px; border-radius: 3px; cursor: pointer; }
+.cal-day:hover { outline: 2px solid #f1f3f8; }
+.cal-missing { background: transparent; border: 1px dashed #444; cursor: default; }
+.cal-missing:hover { outline: none; }
+.cal-legend { width: 240px; }
+.cal-legend-bar { height: 8px; border-radius: 4px; margin-bottom: 2px; }
