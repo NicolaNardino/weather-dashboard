@@ -150,16 +150,7 @@ export function weekWindow(year: number, week: number): Window {
 /** The rows inside a window — every period query is one of these. */
 export const queryWindow = (w: Window): WeatherRow[] => queryRange(w.from, w.to);
 
-/** One day as a row list — the row-list shape every other period query returns. */
-export const queryDayRows = (date: string): WeatherRow[] => queryWindow(dayWindow(date));
-
-export const queryMonth = (year: number, month: number): WeatherRow[] =>
-  queryWindow(monthWindow(year, month));
-
 export const queryYear = (year: number): WeatherRow[] => queryWindow(yearWindow(year));
-
-export const queryWeek = (year: number, week: number): WeatherRow[] =>
-  queryWindow(weekWindow(year, week));
 
 /** Every stored row. Only the import needs this — it diffs against what's there. */
 export function queryAllRows(): WeatherRow[] {

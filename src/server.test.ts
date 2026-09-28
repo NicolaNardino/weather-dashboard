@@ -53,6 +53,35 @@ test('the day route 404s on a missing day; bad params are 400s', async () => {
   assert.equal((await get('/api/across-years?unit=decade')).status, 400);
 });
 
+test('across-years says how many of the period\'s days each year covers', async () => {
+  // March 2020 holds 4 days, March 2021 just one — both partial months. Neither
+  // is clipped to the recorded span: the comparison is against a whole March.
+  const month = await get('/api/across-years?unit=month&month=3');
+  assert.equal(month.status, 200);
+  assert.deepEqual(
+    month.body.years.map((y: any) => [y.year, y.days]),
+    [[2020, { recorded: 4, total: 31 }], [2021, { recorded: 1, total: 31 }]],
+  );
+
+  // A single day is complete wherever it is recorded, and a year without it is
+  // left out rather than reported as 0 of 1.
+  const day = await get('/api/across-years?unit=day&month=3&day=1');
+  assert.deepEqual(
+    day.body.years.map((y: any) => [y.year, y.days]),
+    [[2020, { recorded: 1, total: 1 }], [2021, { recorded: 1, total: 1 }]],
+  );
+  const onlyOne = await get('/api/across-years?unit=day&month=3&day=4');
+  assert.deepEqual(onlyOne.body.years.map((y: any) => y.year), [2020]);
+
+  // ISO week 10 is 2–8 March 2020 (three of its days recorded) but 8–14 March
+  // 2021, which holds none — so only 2020 is compared, out of seven days.
+  const week = await get('/api/across-years?unit=week&week=10');
+  assert.deepEqual(
+    week.body.years.map((y: any) => [y.year, y.days]),
+    [[2020, { recorded: 3, total: 7 }]],
+  );
+});
+
 test('precip-ytd accumulates within each year', async () => {
   const { body } = await get('/api/precip-ytd');
   assert.deepEqual(body.years.map((y: any) => [y.year, y.days.at(-1).total]), [[2020, 4], [2021, 2]]);

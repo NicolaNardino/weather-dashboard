@@ -1640,8 +1640,27 @@ function renderCompareSummary(sides: CompareSide[]): void {
 // gathers each year's rows for the chosen period; here each year becomes one
 // overlaid series (aligned on a shared within-period axis) plus one column in
 // the averages table.
-interface YearBlock { year: number; rows: WeatherRow[]; stats: Stats; }
+interface YearBlock {
+  year: number;
+  rows: WeatherRow[];
+  stats: Stats;
+  /** Days behind this year's figures, against the period's calendar length. */
+  days: { recorded: number; total: number };
+}
 interface YoyResponse { unit: YoyUnit; label: string; years: YearBlock[]; }
+
+/**
+ * A year that recorded only part of the period — started mid-month, still
+ * under way, or with gaps. Its averages and totals cover fewer days than a
+ * complete year's, so setting the two side by side needs saying so: a March
+ * five days old next to a whole March otherwise reads as a like-for-like pair.
+ */
+const isPartial = (y: YearBlock): boolean => y.days.recorded < y.days.total;
+
+/** A year's column head: the year, and how many of the period's days it holds. */
+const yearHead = (y: YearBlock): string =>
+  `${y.year}<div class="small fw-normal ${isPartial(y) ? 'text-warning' : 'text-muted'}">` +
+  `${y.days.recorded}/${plural(y.days.total, 'day')}</div>`;
 
 /**
  * One entry per comparison unit — its `ControlStrip` (label, value pickers and
@@ -1786,9 +1805,16 @@ async function loadYoy(): Promise<void> {
     clearView(YOY_VIEW);
     return;
   }
-  status.textContent = data.years.length < 2
-    ? `Only ${data.years[0].year} has data for this period — add another year to compare.`
-    : '';
+  const partial = data.years.filter(isPartial);
+  status.textContent = [
+    data.years.length < 2
+      ? `Only ${data.years[0].year} has data for this period — add another year to compare.`
+      : '',
+    partial.length
+      ? `Partial: ${partial.map(y => `${y.year} has ${y.days.recorded} of ${plural(y.days.total, 'day')}`)
+          .join(', ')} — not directly comparable with a complete period.`
+      : '',
+  ].filter(Boolean).join(' ');
 
   const spec = YOY_UNITS[data.unit];
   const { positions, labels: xlabels } = spec.axis(data.label);
@@ -1796,21 +1822,40 @@ async function loadYoy(): Promise<void> {
   // year's value (or null where a year is missing that day).
   const byPos = data.years.map(yb => new Map(yb.rows.map(row => [spec.pos(row), row])));
 
-  drawCharts(YOY_VIEW, xlabels, (metric, type) =>
-    data.years.map((yb, i) =>
+  drawCharts(YOY_VIEW, xlabels, (metric, type) => {
+    const perYear = data.years.map((yb, i) =>
       series(
         type,
         String(yb.year),
         positions.map(p => { const row = byPos[i].get(p); return row ? metric.get(row) : null; }),
         yearColor(yb.year),
-      )));
+      ));
+    if (data.years.length < 2) return perYear;
+    // The mean of every year that recorded the slot — the baseline a single
+    // year reads as warm, wet or windy against. Per slot, so a partial year
+    // weighs in only on the days it has; and only where at least two years
+    // did, since the "mean" of one year is just that year's line again. Always
+    // a dashed line, even over the precipitation bars, so it reads as a
+    // reference rather than another year.
+    const meanLine = positions.map(p => {
+      const vals = byPos.flatMap(m => { const row = m.get(p); return row ? [metric.get(row)] : []; });
+      return vals.length >= 2 ? round1(mean(vals)) : null;
+    });
+    return [
+      ...perYear,
+      series('line', `Mean of ${data.years.length} years`, meanLine, HUE.gray, {
+        type: 'line', borderDash: [5, 3], order: -1,
+      }),
+    ];
+  });
 
   renderYoySummary(data);
 }
 
 function renderYoySummary(data: YoyResponse): void {
   renderDeltaTable(YOY_VIEW.table, {
-    columns: data.years.map(y => y.year),
+    // Each year's head says how many of the period's days its figures cover.
+    columns: data.years.map(yearHead),
     metrics: YOY_SUMMARY,
     label: m => m.label,
     // A row names the stat card it reads, so both the accessor and the unit come

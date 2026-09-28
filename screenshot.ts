@@ -85,6 +85,13 @@ const STAT_READY = () => document.getElementById('s-temp-avg')?.textContent !== 
       () => (document.getElementById('ytd-note')?.textContent ?? '').startsWith('As of'),
       undefined, { timeout: 15000 },
     );
+    // Each year's column in the comparison table says how many of the period's
+    // days its figures cover ("18/31 days"), so a partial period can't pass
+    // for a complete one.
+    await page.waitForFunction(
+      () => /\d+\/\d+ days?/.test(document.getElementById('yoy-table-head')?.textContent ?? ''),
+      undefined, { timeout: 15000 },
+    );
     await page.screenshot({ path: path.join(__dirname, 'dashboard-yoy.png'), fullPage: true });
     console.log('Screenshot: dashboard-yoy.png');
   } catch (e) {

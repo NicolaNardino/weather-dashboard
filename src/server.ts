@@ -4,9 +4,9 @@ import { dayCount, eachDay, isoDay, ymd } from './dates';
 import { computeNormals, MD_AXIS, NormalRow, NORMALS_PERIOD } from './normals';
 import { DATA_FILE, describeImport, importFile } from './import';
 import {
-  queryDayRows, queryWeek, queryMonth, queryRange, queryWindow, coverage, Window,
+  queryRange, queryWindow, coverage, Window,
   dayWindow, weekWindow, monthWindow, yearWindow,
-  queryAllDates, queryYears, aggregateStats, getMeta, WeatherRow, precipYtd,
+  queryAllDates, queryYears, aggregateStats, getMeta, precipYtd,
   queryPublicRange, upsertPublic, PublicRow, PublicField, PUBLIC_FIELDS,
   queryNormals, upsertNormals,
 } from './db';
@@ -152,33 +152,37 @@ function rowsRoute<T extends string | number = string>(
 
 /**
  * One entry per year-over-year comparison unit: the params it needs, the label
- * it puts on the result, and how to gather one year's rows. Dispatching the
+ * it puts on the result, and one year's calendar window for it. Dispatching the
  * unit once here keeps a new unit to a single entry, instead of a three-arm
  * if/else that spelled out validation, labelling and querying separately.
+ *
+ * A window rather than the rows themselves, because the reply also says how
+ * much of the period each year actually covers — which needs the period's
+ * calendar length, not just the days that happen to be stored.
  */
 interface YoyUnit {
   /** Query params that must be present and numeric. */
   needs: string[];
   label: (q: Record<string, number>) => string;
-  /** One year's rows for this unit. */
-  rows: (q: Record<string, number>, year: number) => WeatherRow[];
+  /** One year's calendar window for this unit. */
+  window: (q: Record<string, number>, year: number) => Window;
 }
 
 const YOY_UNITS: Record<string, YoyUnit> = {
   day: {
     needs: ['month', 'day'],
     label: q => `${monthName(q.month)} ${q.day}`,
-    rows: (q, y) => queryDayRows(ymd(y, q.month, q.day)),
+    window: (q, y) => dayWindow(ymd(y, q.month, q.day)),
   },
   week: {
     needs: ['week'],
     label: q => `Week ${q.week}`,
-    rows: (q, y) => queryWeek(y, q.week),
+    window: (q, y) => weekWindow(y, q.week),
   },
   month: {
     needs: ['month'],
     label: q => monthName(q.month),
-    rows: (q, y) => queryMonth(y, q.month),
+    window: (q, y) => monthWindow(y, q.month),
   },
 };
 
@@ -264,6 +268,13 @@ app.get('/api/compare', async (req, res) => {
 //   ?unit=day&month=3&day=15   → 15 March of each year
 // Each year is returned with its rows and aggregated stats; years with no data
 // for that period are omitted, so with one year of data it degrades to one.
+//
+// Each year also carries `days: { recorded, total }` — the days behind its
+// averages against the period's full calendar length. Unlike the period
+// routes' `coverage`, this is NOT clipped to the recorded span: a March that is
+// only 5 days old is complete as far as the station goes, but its averages
+// still aren't comparable with a whole March, and that is what this view needs
+// to say.
 app.get('/api/across-years', (req, res) => {
   // Name the unit once: the same string picks the spec that answers the
   // request and labels the reply. Echoing `req.query.unit` back instead
@@ -282,9 +293,17 @@ app.get('/api/across-years', (req, res) => {
   if (!q) return;
 
   const years = queryYears()
-    .map(year => ({ year, rows: spec.rows(q, year) }))
+    .map(year => {
+      const w = spec.window(q, year);
+      return { year, rows: queryWindow(w), total: dayCount(w.from, w.to) };
+    })
     .filter(x => x.rows.length)
-    .map(x => ({ ...x, stats: aggregateStats(x.rows) }));
+    .map(({ year, rows, total }) => ({
+      year,
+      rows,
+      stats: aggregateStats(rows),
+      days: { recorded: rows.length, total },
+    }));
 
   res.json({ unit, label: spec.label(q), years });
 });
