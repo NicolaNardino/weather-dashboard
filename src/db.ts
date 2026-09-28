@@ -211,13 +211,20 @@ export function upsertNormals(location: string, rows: NormalRow[]): void {
   for (const r of rows) stmt.run(location, r.md, ...PUBLIC_FIELDS.map(f => r[f]));
 }
 
+/**
+ * Round to `dp` decimal places. The one arithmetic rule the three places that
+ * report a number share — the stat-card averages here, the running rain totals
+ * below, and the long-term normals in normals.ts — and each spelled out its own
+ * `Math.round(v * 100) / 100`.
+ */
+export const round = (v: number, dp = 2): number => Math.round(v * 10 ** dp) / 10 ** dp;
+
 export function aggregateStats(rows: WeatherRow[]) {
   if (!rows.length) return null;
 
   // A measure to aggregate: reads one number out of a row. (Named `Get` rather
   // than `Field` so it doesn't shadow the exported column-name union.)
   type Get = (r: WeatherRow) => number;
-  const round = (v: number, dp: number) => Math.round(v * 10 ** dp) / 10 ** dp;
   const max = (f: Get) => Math.max(...rows.map(f));
   const min = (f: Get) => Math.min(...rows.map(f));
   const sum = (f: Get) => rows.reduce((a, r) => a + f(r), 0);
@@ -321,7 +328,7 @@ export function precipYtd(): { year: number; days: { md: string; total: number }
     let total = 0;
     const days = queryYear(year).map(r => {
       total += r.precip;
-      return { md: r.date.slice(5), total: Math.round(total * 100) / 100 };
+      return { md: r.date.slice(5), total: round(total) };
     });
     return { year, days };
   });
