@@ -1,4 +1,4 @@
-import { PUBLIC_FIELDS, PublicField, PublicRow } from './db';
+import { PUBLIC_FIELDS, PublicField, PublicRow, round } from './db';
 
 /**
  * Long-term daily normals: for each calendar day (`MM-DD`), the mean of every
@@ -18,8 +18,6 @@ export const NORMALS_PERIOD = {
 /** Every `MM-DD` of a leap year, in calendar order — so 29 Feb has a slot. */
 export const MD_AXIS: string[] = Array.from({ length: 366 }, (_, i) =>
   new Date(Date.UTC(2024, 0, 1 + i)).toISOString().slice(5, 10));
-
-const round2 = (v: number) => Math.round(v * 100) / 100;
 
 /**
  * Daily normals from a run of daily rows spanning many years.
@@ -58,7 +56,7 @@ export function computeNormals(rows: PublicRow[], halfWindow = 7): NormalRow[] {
         total += v;
         count++;
       }
-      row[f] = count ? round2(total / count) : null;
+      row[f] = count ? round(total / count) : null;
     });
     return row;
   });

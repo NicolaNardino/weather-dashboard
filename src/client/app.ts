@@ -249,6 +249,25 @@ const last = <T>(xs: readonly T[]): T | undefined => xs[xs.length - 1];
  */
 const oneTo = (n: number): number[] => Array.from({ length: n }, (_, i) => i + 1);
 
+/**
+ * The arithmetic mean of a list. The heatmap's diverging scale pivots on it and
+ * the Compare summary averages each column with it, and each spelled out the
+ * same `reduce((a, b) => a + b, 0) / length`.
+ */
+const mean = (xs: number[]): number => xs.reduce((a, b) => a + b, 0) / xs.length;
+
+/** One decimal place — how every figure the two summaries and the heatmap
+    legend print is rounded, written out as `Math.round(v * 10) / 10` at each. */
+const round1 = (v: number): number => Math.round(v * 10) / 10;
+
+/**
+ * "3 days" / "1 day" — a count with its noun agreeing. Four places on the page
+ * say how many days something lasted (the spell text, both coverage messages
+ * and the stat cards that report a count of days) and each carried its own
+ * `n === 1` test.
+ */
+const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`;
+
 /** `getElementById`, asserted — every id below is one this page owns. */
 const el = (id: string) => document.getElementById(id)!;
 
@@ -845,7 +864,7 @@ const STAT_CARDS: StatCard[] = [
 
 /** "6 days, 2026-03-02 → 2026-03-07" — or "none" when no day qualified. */
 const spellText = (sp: Spell): string =>
-  sp.from ? `${sp.days} day${sp.days === 1 ? '' : 's'}, ${sp.from} → ${sp.to}` : 'none';
+  sp.from ? `${plural(sp.days, 'day')}, ${sp.from} → ${sp.to}` : 'none';
 
 /** The card a stats group belongs to, by prefix — how a metric finds its unit. */
 const CARD_BY_PREFIX: Record<string, StatCard> = Object.fromEntries(
@@ -885,7 +904,7 @@ const statText = (prefix: string, key: string, value: number | string): string =
   if (CARD_BY_PREFIX[prefix].bare?.includes(key)) return String(value);
   const unit = unitOf(prefix);
   // A count of days reads "1 day", not "1 days".
-  return `${value} ${unit === 'days' && value === 1 ? 'day' : unit}`;
+  return unit === 'days' ? plural(Number(value), 'day') : `${value} ${unit}`;
 };
 
 /** The stat-card prefix behind a stored measure: `temp_high` → `temp`. */
@@ -1173,8 +1192,8 @@ function renderCoverage(c: Coverage | null): void {
     : !c.expected
       ? 'Outside the recorded span'
       : n
-        ? `Missing ${n} day${n === 1 ? '' : 's'} · ${c.recorded} of ${c.expected} recorded`
-        : `All ${c.expected} day${c.expected === 1 ? '' : 's'} recorded`;
+        ? `Missing ${plural(n, 'day')} · ${c.recorded} of ${c.expected} recorded`
+        : `All ${plural(c.expected, 'day')} recorded`;
 }
 
 // --- Calendar heatmap ---
@@ -1238,7 +1257,7 @@ function calScale(m: CalMetric, values: number[]) {
   const lo = Math.min(...values);
   const hi = Math.max(...values);
   const unit = unitOf(prefixOf(m.field));
-  const fmt = (v: number) => `${Math.round(v * 10) / 10} ${unit}`;
+  const fmt = (v: number) => `${round1(v)} ${unit}`;
   if (m.scale === 'sequential') {
     return {
       color: (v: number) => (v > 0 && hi > 0 ? ramp(CAL_COLORS.seq, Math.sqrt(v / hi)) : CAL_COLORS.none),
@@ -1246,15 +1265,15 @@ function calScale(m: CalMetric, values: number[]) {
       ticks: ['dry', fmt(hi)],
     };
   }
-  const mean = values.reduce((a, b) => a + b, 0) / values.length;
-  const span = Math.max(hi - mean, mean - lo) || 1;
+  const mid = mean(values);
+  const span = Math.max(hi - mid, mid - lo) || 1;
   return {
     color: (v: number) => {
-      const t = (v - mean) / span;
+      const t = (v - mid) / span;
       return t < 0 ? mix(CAL_COLORS.mid, CAL_COLORS.cold, -t) : mix(CAL_COLORS.mid, CAL_COLORS.warm, t);
     },
-    gradient: `${mix(CAL_COLORS.mid, CAL_COLORS.cold, (mean - lo) / span)}, ${CAL_COLORS.mid}, ${mix(CAL_COLORS.mid, CAL_COLORS.warm, (hi - mean) / span)}`,
-    ticks: [fmt(lo), `mean ${fmt(mean)}`, fmt(hi)],
+    gradient: `${mix(CAL_COLORS.mid, CAL_COLORS.cold, (mid - lo) / span)}, ${CAL_COLORS.mid}, ${mix(CAL_COLORS.mid, CAL_COLORS.warm, (hi - mid) / span)}`,
+    ticks: [fmt(lo), `mean ${fmt(mid)}`, fmt(hi)],
   };
 }
 
@@ -1594,7 +1613,7 @@ async function loadCompare(): Promise<void> {
 function renderCompareSummary(sides: CompareSide[]): void {
   const avg = (vals: (number | null)[]): number | null => {
     const v = vals.filter((x): x is number => x != null && !Number.isNaN(x));
-    return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
+    return v.length ? mean(v) : null;
   };
   // One decimal throughout — every measure compared here is a plain reading.
   const one = (n: number) => n.toFixed(1);
@@ -1790,8 +1809,6 @@ async function loadYoy(): Promise<void> {
 }
 
 function renderYoySummary(data: YoyResponse): void {
-  const round = (v: number) => Math.round(v * 10) / 10;
-
   renderDeltaTable(YOY_VIEW.table, {
     columns: data.years.map(y => y.year),
     metrics: YOY_SUMMARY,
@@ -1807,7 +1824,7 @@ function renderYoySummary(data: YoyResponse): void {
         ? [{
             head: 'Δ latest−earliest',
             pair: [0, -1],
-            of: (earliest, latest) => round(latest - earliest),
+            of: (earliest, latest) => round1(latest - earliest),
           }]
         : [],
   });
@@ -1839,13 +1856,13 @@ function renderYtdShell(): void {
 }
 
 async function loadYtd(): Promise<void> {
-  let years: YtdYear[];
-  try {
-    ({ years } = await fetchJson<{ years: YtdYear[] }>('/api/precip-ytd'));
-  } catch (e) {
-    el('ytd-note').textContent = `Could not load: ${(e as Error).message}`;
-    return;
-  }
+  // The note under the heading doubles as this chart's status line, the way
+  // both overlays already report through one of their own.
+  const data = await loadInto<{ years: YtdYear[] }>(
+    el('ytd-note'), '/api/precip-ytd', 'Loading…', 'Could not load',
+  );
+  if (!data) return;
+  const { years } = data;
   if (!years.length) {
     el('ytd-note').textContent = 'No data yet.';
     destroyChart(YTD_CHART);
