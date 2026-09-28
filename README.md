@@ -118,11 +118,16 @@ The front end is a thin client over these routes; each period route returns
 
 ```
 src/
-  db.ts          SQLite access (node:sqlite), query helpers, stat aggregation
+  db.ts          SQLite access (node:sqlite), period windows, stat aggregation
+  dates.ts       Date helpers shared by the query layer and the routes
+  normals.ts     Reduces 30 years of daily data to one long-term normal per calendar day
   import.ts      Parses weather_data.txt → weather.db
   server.ts      Express routes over db.ts
+  *.test.ts      Unit and route tests (node:test)
+  test/
+    helpers.ts   Test setup: points each test file at a throwaway database
   client/
-    app.ts       All UI state, charts, and view toggling — no framework
+    app.ts       All UI state, charts, and the three views — no framework
 public/
   index.html     Dashboard markup (Bootstrap + Chart.js from CDN)
   app.js         Compiled from src/client/app.ts (generated, git-ignored)
@@ -144,15 +149,17 @@ browser. After editing anything under `src/`, restart the dev server. Editing
 `npm test` runs the unit and route tests — stats, spells, climate days,
 coverage, the importer, the long-term normals and the API routes — with Node's
 built-in `node:test`, each file against its own throwaway database and with no
-network. `screenshot.ts` is the end-to-end verification harness: it drives the running server with Playwright, asserts every period
-renders with populated stat cards, captures screenshots, and **exits non-zero**
-on any console error, page error, failed same-origin request, or stat card that
-never fills in.
+network. `screenshot.ts` is the end-to-end verification harness: it drives the
+running server with Playwright, asserts every period renders with populated
+stat cards, checks the Year period draws the calendar heatmap and Across Years
+draws the year-to-date rain chart and labels each year with its recorded day
+count, captures screenshots, and **exits non-zero** on any console error, page
+error, failed same-origin request, or stat card that never fills in.
 
 ```bash
 npx playwright install chromium   # once
 npm run dev &                     # server must be up first
-npm run screenshot                # writes dashboard*.png
+npm run screenshot                # writes dashboard.png / -month / -year / -yoy .png
 ```
 
 Set `PLAYWRIGHT_CHROMIUM_PATH` to reuse an already-installed browser (handy
@@ -163,7 +170,8 @@ something other than `http://localhost:3000`.
 
 `.github/workflows/ci.yml` runs on every push and PR to `main`, on Node 24:
 the TypeScript-only rule is enforced against tracked files, `npm run build`
-type-checks server and client, `npm run import` re-parses the committed
+type-checks server and client, `npm test` runs the unit and route tests,
+`npm run import` re-parses the committed
 `weather_data.txt`, and the harness above runs against a live server. The
 screenshots are uploaded as a build artifact, so you can eyeball a UI change
 straight from the PR.
