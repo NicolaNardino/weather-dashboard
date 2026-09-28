@@ -41,7 +41,11 @@ server to run.
   downloaded once and cached) so a period reads as warmer, colder, wetter or
   drier than usual — for your station and for Baar.
 - **Across Years** — the same day, week or month compared year over year, with
-  a year-to-date precipitation chart overlaying each year's running rain total.
+  a dashed mean-of-years baseline on every chart and a year-to-date
+  precipitation chart overlaying each year's running rain total. Each year's
+  column says how many of the period's days it recorded (e.g. `11/30 days`),
+  and a partial period is flagged, so a half-recorded month can't pass for a
+  like-for-like comparison.
 - **One-click re-import** — drop in a fresh station export and hit **↻ Import**;
   ingestion is idempotent, so re-importing never duplicates rows.
 
@@ -104,7 +108,7 @@ The front end is a thin client over these routes; each period route returns
 | `GET /api/year?year=` | A full year |
 | `GET /api/range?from=&to=` | Any inclusive date range |
 | `GET /api/compare?from=&to=` | Your data aligned with Open-Meteo for the reference location |
-| `GET /api/across-years?unit=&…` | The same day, week or month gathered from every year |
+| `GET /api/across-years?unit=&…` | The same day, week or month gathered from every year, each with its recorded vs calendar day count |
 | `GET /api/precip-ytd` | Each year's running precipitation total, one point per recorded day |
 | `GET /api/dates` | All available dates |
 | `GET /api/status` | Last import time + record count |
