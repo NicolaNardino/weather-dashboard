@@ -446,6 +446,23 @@ const poolSelect = (pool: string[], onChange: () => void, selected = last(pool))
 const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 /**
+ * "Mar" for 3. Four places named a month and each indexed MONTH_NAMES itself,
+ * every one of them re-deriving that the list is 0-based and the month is not.
+ */
+const monthName = (month: number): string => MONTH_NAMES[month - 1];
+
+/**
+ * The month behind an `MM-DD` key: "09-27" → "Sep". The year-to-date chart
+ * labels both its points and its month ticks from that key, and each parsed the
+ * two-digit month out and shifted it for the list on its own.
+ */
+const mdMonth = (md: string): string => monthName(Number(md.slice(0, 2)));
+
+/** Whether an `MM-DD` key is the first of its month — where the year-to-date
+    axis puts a tick, and the only place it draws a grid line. */
+const isMonthStart = (md: string | undefined): boolean => !!md?.endsWith('-01');
+
+/**
  * Build one of the numbered pickers the dashboard and the year-over-year view
  * share: options numbered 1..`count` labelled by `label`, pre-selected to the
  * reference date's own value for that unit (so a fresh load lands on populated
@@ -462,7 +479,7 @@ function numberedSelect(count: number, label: (n: number) => string, of: (d: Dat
 }
 
 const weekSelect = numberedSelect(53, n => `Week ${n}`, isoWeek);
-const monthSelect = numberedSelect(12, n => MONTH_NAMES[n - 1], d => d.getMonth() + 1);
+const monthSelect = numberedSelect(12, monthName, d => d.getMonth() + 1);
 const daySelect = numberedSelect(31, String, d => d.getDate());
 
 /** A small dimmed caption sitting next to a picker. */
@@ -1312,7 +1329,7 @@ function renderCalendar(rows: WeatherRow[], missing: string[]): void {
       return `<div class="cal-day" data-date="${date}" style="background:${scale.color(v)}"
         title="${date} · ${v} ${unit}"></div>`;
     });
-    return `<div class="cal-month">${MONTH_NAMES[mo - 1]} ${String(y).slice(2)}</div>${cells.join('')}`;
+    return `<div class="cal-month">${monthName(mo)} ${String(y).slice(2)}</div>${cells.join('')}`;
   }).join('');
 
   box.innerHTML = cardWell({
@@ -1889,7 +1906,7 @@ const YTD_AXIS: string[] = Array.from({ length: 366 }, (_, i) =>
   new Date(Date.UTC(2024, 0, 1 + i)).toISOString().slice(5, 10));
 
 /** "Sep 27" for "09-27". */
-const mdLabel = (md: string) => `${MONTH_NAMES[Number(md.slice(0, 2)) - 1]} ${Number(md.slice(3))}`;
+const mdLabel = (md: string) => `${mdMonth(md)} ${Number(md.slice(3))}`;
 
 function renderYtdShell(): void {
   setHtml('yoy-ytd', cardWell({
@@ -1937,9 +1954,9 @@ async function loadYtd(): Promise<void> {
     scales: {
       // One tick per month, on its first day.
       x: { ticks: { autoSkip: false, maxRotation: 0,
-        callback: (_v: unknown, i: number) => (YTD_AXIS[i].endsWith('-01') ? MONTH_NAMES[Number(YTD_AXIS[i].slice(0, 2)) - 1] : '') },
+        callback: (_v: unknown, i: number) => (isMonthStart(YTD_AXIS[i]) ? mdMonth(YTD_AXIS[i]) : '') },
         // …and a grid line only there, rather than one per day.
-        grid: { color: (c: { index: number }) => (YTD_AXIS[c.index]?.endsWith('-01') ? '#333' : 'transparent') } },
+        grid: { color: (c: { index: number }) => (isMonthStart(YTD_AXIS[c.index]) ? '#333' : 'transparent') } },
       y: { min: 0 },
     },
   });
