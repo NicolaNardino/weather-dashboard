@@ -1613,7 +1613,11 @@ async function loadCompare(): Promise<void> {
   }
   const from = lastRows[0].date;
   const to = last(lastRows)!.date;
-  el('cmp-range').textContent = `${from} → ${to}`;
+  // Named once: the label is written before the fetch, so a failure still says
+  // which window was being compared, and again after it with what the reply
+  // could supply appended.
+  const range = `${from} → ${to}`;
+  el('cmp-range').textContent = range;
 
   const data = await loadInto<{
     mine: WeatherRow[]; public: PublicRow[]; normals: PublicRow[]; normals_label: string;
@@ -1623,26 +1627,34 @@ async function loadCompare(): Promise<void> {
   );
   if (!data) return;
 
-  // Align public rows to my dates so both series share the same x-axis.
-  const pub = new Map<string, PublicRow>(data.public.map(p => [p.date, p]));
+  // Both public series are read off MY dates, so every side shares one x-axis
+  // and a date the service has no row for contributes a gap. Each of them
+  // spelled that lookup out itself.
+  const alignedTo = (by: Map<string, PublicRow>) => (key: SharedKey) =>
+    lastRows.map(r => by.get(r.date)?.[key] ?? null);
+  const normals = new Map<string, PublicRow>(data.normals.map(n => [n.date, n]));
+
+  // The long-term normal is a third side when the server could supply it — it
+  // can't on a first use while offline, and the comparison stands without. It is
+  // spread into the list rather than pushed onto it afterwards, so the sides,
+  // their order and the condition for the third all read in one place.
   const sides: CompareSide[] = [
     { name: 'Me', head: 'My avg', color: HUE.sky, values: key => lastRows.map(r => r[key]) },
     {
       name: 'Baar', head: 'Baar avg', color: HUE.orange, extra: { borderDash: [5, 3] },
-      values: key => lastRows.map(r => pub.get(r.date)?.[key] ?? null),
+      values: alignedTo(new Map<string, PublicRow>(data.public.map(p => [p.date, p]))),
     },
+    ...(normals.size
+      ? [{
+          name: 'Normal', head: 'Normal', color: HUE.gray,
+          extra: { borderDash: [2, 3], pointRadius: 0 },
+          values: alignedTo(normals),
+        }]
+      : []),
   ];
 
-  // The long-term normal is a third side when the server could supply it —
-  // it can't on a first use while offline, and the comparison stands without.
-  const normals = new Map<string, PublicRow>(data.normals.map(n => [n.date, n]));
-  if (normals.size) {
-    sides.push({
-      name: 'Normal', head: 'Normal', color: HUE.gray, extra: { borderDash: [2, 3], pointRadius: 0 },
-      values: key => lastRows.map(r => normals.get(r.date)?.[key] ?? null),
-    });
-  }
-  el('cmp-range').textContent = `${from} → ${to}` +
+  el('cmp-range').textContent =
+    range +
     (normals.size ? ` · Normal: Baar ${data.normals_label}` : ' · Long-term normal unavailable');
 
   // Lines name their measure ("Me · High"); the bar chart has only one.
@@ -1661,6 +1673,10 @@ function renderCompareSummary(sides: CompareSide[]): void {
   };
   // One decimal throughout — every measure compared here is a plain reading.
   const one = (n: number) => n.toFixed(1);
+  // Every difference on this table is a plain subtraction between two of its
+  // columns; only which two differ, which is what the three entries below say.
+  const diff = (head: string, a: number, b: number): Delta =>
+    ({ head, pair: [a, b], of: (x, y) => x - y });
 
   renderDeltaTable(COMPARE_VIEW.table, {
     columns: sides.map(s => s.head),
@@ -1670,12 +1686,10 @@ function renderCompareSummary(sides: CompareSide[]): void {
     format: () => one,
     // Mine against Baar, then — when the normals loaded — each against the
     // long-term normal: the "warmer / wetter than usual" reading.
-    deltas: ([
-      ['Me − Baar', 0, 1],
-      ...(sides.length > 2 ? [['Me vs normal', 0, 2], ['Baar vs normal', 1, 2]] : []),
-    ] as [string, number, number][]).map(([head, a, b]): Delta => ({
-      head, pair: [a, b], of: (x, y) => x - y,
-    })),
+    deltas: [
+      diff('Me − Baar', 0, 1),
+      ...(sides.length > 2 ? [diff('Me vs normal', 0, 2), diff('Baar vs normal', 1, 2)] : []),
+    ],
   });
 }
 
