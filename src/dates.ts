@@ -22,6 +22,18 @@ export const ymd = (year: number, month: number, day: number): string =>
 export const isoDay = (d: Date): string => d.toISOString().slice(0, 10);
 
 /**
+ * A stored `YYYY-MM-DD` day as the `Date` at its UTC midnight — the inverse of
+ * `isoDay`, and the one step the two helpers below open with. Each spelled the
+ * `T00:00:00Z` suffix out itself, `dayCount` twice over — three places asserting
+ * that a bare day string needs a time and a zone bolted on before a `Date` will
+ * read it the way the rest of this file does.
+ */
+const utcDay = (iso: string): Date => new Date(`${iso}T00:00:00Z`);
+
+/** Milliseconds in a day — the divisor behind the day count below. */
+const MS_PER_DAY = 86_400_000;
+
+/**
  * `d` shifted by `days`, as a new `Date` — the week query walked the calendar
  * twice by copying a date and then mutating the copy, which reads as two steps
  * and leaves a half-built date in scope between them.
@@ -34,11 +46,11 @@ export const addDays = (d: Date, days: number): Date => {
 
 /** How many calendar days `[from, to]` spans, both ends included. */
 export const dayCount = (from: string, to: string): number =>
-  Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000) + 1;
+  Math.round((utcDay(to).getTime() - utcDay(from).getTime()) / MS_PER_DAY) + 1;
 
 /** Every `YYYY-MM-DD` day in `[from, to]`, both ends included; empty if from > to. */
 export function eachDay(from: string, to: string): string[] {
   const days: string[] = [];
-  for (let d = new Date(`${from}T00:00:00Z`); isoDay(d) <= to; d = addDays(d, 1)) days.push(isoDay(d));
+  for (let d = utcDay(from); isoDay(d) <= to; d = addDays(d, 1)) days.push(isoDay(d));
   return days;
 }
