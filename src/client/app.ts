@@ -45,13 +45,26 @@ type Measure = Exclude<keyof WeatherRow, 'date'>;
 /** The measures both my rows and the public ones carry — the Compare axis. */
 type SharedKey = Measure & keyof PublicRow;
 
+/**
+ * The chart chrome: the three greys a chart's legend, its tick labels and its
+ * grid lines are drawn in, as opposed to the plotted HUEs further down. Each was
+ * a literal where it was used — the tick grey and the grid grey twice over, once
+ * per axis, and the grid grey again in the year-to-date chart's own grid
+ * callback — so five literals said three things and recolouring the chrome meant
+ * finding every axis that happened to mention it.
+ */
+const CHROME = { legend: '#aaa', tick: '#888', grid: '#333' } as const;
+
 const CHART_DEFAULTS = {
   responsive: true,
   animation: false,
-  plugins: { legend: { labels: { color: '#aaa', boxWidth: 12, font: { size: 11 } } } },
+  plugins: { legend: { labels: { color: CHROME.legend, boxWidth: 12, font: { size: 11 } } } },
   scales: {
-    x: { ticks: { color: '#888', maxRotation: 45, font: { size: 10 } }, grid: { color: '#333' } },
-    y: { ticks: { color: '#888', font: { size: 10 } }, grid: { color: '#333' } },
+    x: {
+      ticks: { color: CHROME.tick, maxRotation: 45, font: { size: 10 } },
+      grid: { color: CHROME.grid },
+    },
+    y: { ticks: { color: CHROME.tick, font: { size: 10 } }, grid: { color: CHROME.grid } },
   },
 };
 
@@ -1187,23 +1200,32 @@ function renderTable(rows: WeatherRow[]): void {
 // counts: days before the first recording, or not yet imported, don't.
 interface Coverage { expected: number; recorded: number; missing: string[] }
 
-/** Consecutive dates folded into runs: "2026-08-03 → 2026-08-06, 2026-09-01". */
+/** The `YYYY-MM-DD` day after `iso`, in UTC — what makes two dates consecutive. */
+const nextDay = (iso: string): string =>
+  new Date(Date.parse(`${iso}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+
+/**
+ * Consecutive dates folded into runs: "2026-08-03 → 2026-08-06, 2026-09-01".
+ * The open run's own last day is what the next date has to follow, so asking
+ * that directly replaces a pair of intermediate bindings whose `&&` chains were
+ * there only to keep the day arithmetic off an empty run.
+ */
 function dateRuns(dates: string[]): string {
   const runs: string[][] = [];
   for (const d of dates) {
     const run = last(runs);
-    const prev = run && last(run);
-    const next = prev && new Date(Date.parse(`${prev}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
-    if (run && next === d) run.push(d); else runs.push([d]);
+    if (run && nextDay(last(run)!) === d) run.push(d);
+    else runs.push([d]);
   }
   return runs.map(r => (r.length > 1 ? `${r[0]} → ${last(r)}` : r[0])).join(', ');
 }
 
 function renderCoverage(c: Coverage | null): void {
   const badge = el('coverage');
-  const n = c?.missing.length ?? 0;
+  const missing = c?.missing ?? [];
+  const n = missing.length;
   badge.className = `small ms-auto ${n ? 'text-warning' : 'text-muted'}`;
-  badge.title = n ? `Missing: ${dateRuns(c!.missing)}` : '';
+  badge.title = n ? `Missing: ${dateRuns(missing)}` : '';
   badge.textContent = !c
     ? 'No data for this period'
     : !c.expected
@@ -1269,6 +1291,10 @@ function ramp(stops: string[], t: number): string {
  * warmer than usual for this window" — since a fixed 0 °C pivot would paint a
  * whole summer one colour. Precipitation is sequential on a square-root scale:
  * a few storms would otherwise wash every ordinary wet day out to the floor.
+ *
+ * It reports the `unit` its legend is labelled in, because the grid it colours
+ * puts the same unit on every day cell's hover text and was deriving it from the
+ * metric a second time.
  */
 function calScale(m: CalMetric, values: number[]) {
   const lo = Math.min(...values);
@@ -1277,6 +1303,7 @@ function calScale(m: CalMetric, values: number[]) {
   const fmt = (v: number) => `${round1(v)} ${unit}`;
   if (m.scale === 'sequential') {
     return {
+      unit,
       color: (v: number) => (v > 0 && hi > 0 ? ramp(CAL_COLORS.seq, Math.sqrt(v / hi)) : CAL_COLORS.none),
       gradient: `${CAL_COLORS.none} 0 8%, ${CAL_COLORS.seq.join(', ')}`,
       ticks: ['dry', fmt(hi)],
@@ -1285,6 +1312,7 @@ function calScale(m: CalMetric, values: number[]) {
   const mid = mean(values);
   const span = Math.max(hi - mid, mid - lo) || 1;
   return {
+    unit,
     color: (v: number) => {
       const t = (v - mid) / span;
       return t < 0 ? mix(CAL_COLORS.mid, CAL_COLORS.cold, -t) : mix(CAL_COLORS.mid, CAL_COLORS.warm, t);
@@ -1313,7 +1341,6 @@ function renderCalendar(rows: WeatherRow[], missing: string[]): void {
   const m = CAL_METRICS.find(x => x.field === calMetric) ?? CAL_METRICS[0];
   const byDate = new Map(rows.map(r => [r.date, r]));
   const scale = calScale(m, rows.map(r => r[m.field]));
-  const unit = unitOf(prefixOf(m.field));
   const days = oneTo(31);
 
   const head = `<div></div>${days.map(d => `<div class="cal-head">${d}</div>`).join('')}`;
@@ -1327,7 +1354,7 @@ function renderCalendar(rows: WeatherRow[], missing: string[]): void {
       if (!r) return gaps.has(date) ? `<div class="cal-day cal-missing" title="${date} · missing"></div>` : '<div></div>';
       const v = r[m.field];
       return `<div class="cal-day" data-date="${date}" style="background:${scale.color(v)}"
-        title="${date} · ${v} ${unit}"></div>`;
+        title="${date} · ${v} ${scale.unit}"></div>`;
     });
     return `<div class="cal-month">${monthName(mo)} ${String(y).slice(2)}</div>${cells.join('')}`;
   }).join('');
@@ -1586,7 +1613,11 @@ async function loadCompare(): Promise<void> {
   }
   const from = lastRows[0].date;
   const to = last(lastRows)!.date;
-  el('cmp-range').textContent = `${from} → ${to}`;
+  // Named once: the label is written before the fetch, so a failure still says
+  // which window was being compared, and again after it with what the reply
+  // could supply appended.
+  const range = `${from} → ${to}`;
+  el('cmp-range').textContent = range;
 
   const data = await loadInto<{
     mine: WeatherRow[]; public: PublicRow[]; normals: PublicRow[]; normals_label: string;
@@ -1596,26 +1627,34 @@ async function loadCompare(): Promise<void> {
   );
   if (!data) return;
 
-  // Align public rows to my dates so both series share the same x-axis.
-  const pub = new Map<string, PublicRow>(data.public.map(p => [p.date, p]));
+  // Both public series are read off MY dates, so every side shares one x-axis
+  // and a date the service has no row for contributes a gap. Each of them
+  // spelled that lookup out itself.
+  const alignedTo = (by: Map<string, PublicRow>) => (key: SharedKey) =>
+    lastRows.map(r => by.get(r.date)?.[key] ?? null);
+  const normals = new Map<string, PublicRow>(data.normals.map(n => [n.date, n]));
+
+  // The long-term normal is a third side when the server could supply it — it
+  // can't on a first use while offline, and the comparison stands without. It is
+  // spread into the list rather than pushed onto it afterwards, so the sides,
+  // their order and the condition for the third all read in one place.
   const sides: CompareSide[] = [
     { name: 'Me', head: 'My avg', color: HUE.sky, values: key => lastRows.map(r => r[key]) },
     {
       name: 'Baar', head: 'Baar avg', color: HUE.orange, extra: { borderDash: [5, 3] },
-      values: key => lastRows.map(r => pub.get(r.date)?.[key] ?? null),
+      values: alignedTo(new Map<string, PublicRow>(data.public.map(p => [p.date, p]))),
     },
+    ...(normals.size
+      ? [{
+          name: 'Normal', head: 'Normal', color: HUE.gray,
+          extra: { borderDash: [2, 3], pointRadius: 0 },
+          values: alignedTo(normals),
+        }]
+      : []),
   ];
 
-  // The long-term normal is a third side when the server could supply it —
-  // it can't on a first use while offline, and the comparison stands without.
-  const normals = new Map<string, PublicRow>(data.normals.map(n => [n.date, n]));
-  if (normals.size) {
-    sides.push({
-      name: 'Normal', head: 'Normal', color: HUE.gray, extra: { borderDash: [2, 3], pointRadius: 0 },
-      values: key => lastRows.map(r => normals.get(r.date)?.[key] ?? null),
-    });
-  }
-  el('cmp-range').textContent = `${from} → ${to}` +
+  el('cmp-range').textContent =
+    range +
     (normals.size ? ` · Normal: Baar ${data.normals_label}` : ' · Long-term normal unavailable');
 
   // Lines name their measure ("Me · High"); the bar chart has only one.
@@ -1634,6 +1673,10 @@ function renderCompareSummary(sides: CompareSide[]): void {
   };
   // One decimal throughout — every measure compared here is a plain reading.
   const one = (n: number) => n.toFixed(1);
+  // Every difference on this table is a plain subtraction between two of its
+  // columns; only which two differ, which is what the three entries below say.
+  const diff = (head: string, a: number, b: number): Delta =>
+    ({ head, pair: [a, b], of: (x, y) => x - y });
 
   renderDeltaTable(COMPARE_VIEW.table, {
     columns: sides.map(s => s.head),
@@ -1643,12 +1686,10 @@ function renderCompareSummary(sides: CompareSide[]): void {
     format: () => one,
     // Mine against Baar, then — when the normals loaded — each against the
     // long-term normal: the "warmer / wetter than usual" reading.
-    deltas: ([
-      ['Me − Baar', 0, 1],
-      ...(sides.length > 2 ? [['Me vs normal', 0, 2], ['Baar vs normal', 1, 2]] : []),
-    ] as [string, number, number][]).map(([head, a, b]): Delta => ({
-      head, pair: [a, b], of: (x, y) => x - y,
-    })),
+    deltas: [
+      diff('Me − Baar', 0, 1),
+      ...(sides.length > 2 ? [diff('Me vs normal', 0, 2), diff('Baar vs normal', 1, 2)] : []),
+    ],
   });
 }
 
@@ -1956,7 +1997,10 @@ async function loadYtd(): Promise<void> {
       x: { ticks: { autoSkip: false, maxRotation: 0,
         callback: (_v: unknown, i: number) => (isMonthStart(YTD_AXIS[i]) ? mdMonth(YTD_AXIS[i]) : '') },
         // …and a grid line only there, rather than one per day.
-        grid: { color: (c: { index: number }) => (isMonthStart(YTD_AXIS[c.index]) ? '#333' : 'transparent') } },
+        grid: {
+          color: (c: { index: number }) =>
+            isMonthStart(YTD_AXIS[c.index]) ? CHROME.grid : 'transparent',
+        } },
       y: { min: 0 },
     },
   });
