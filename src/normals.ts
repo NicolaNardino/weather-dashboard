@@ -20,43 +20,60 @@ export const MD_AXIS: string[] = Array.from({ length: 366 }, (_, i) =>
   new Date(Date.UTC(2024, 0, 1 + i)).toISOString().slice(5, 10));
 
 /**
+ * The mean of the values that are actually there, or null when none is — the one
+ * arithmetic rule both passes below share. A missing measure is skipped rather
+ * than counted as zero, which matters twice over: a day the archive has no
+ * reading for would otherwise drag its own average down, and 29 Feb (which only
+ * the leap years supply) would drag its neighbours' down through the smoothing.
+ *
+ * Both passes used to carry their own running total and count — one as a pair of
+ * parallel arrays, the other as two `let`s inside the window loop — so the same
+ * "skip the nulls, then divide" rule was written twice in two shapes.
+ */
+const meanOf = (values: readonly (number | null)[]): number | null => {
+  let total = 0;
+  let count = 0;
+  for (const v of values) {
+    if (v == null) continue;
+    total += v;
+    count++;
+  }
+  return count ? total / count : null;
+};
+
+/**
  * Daily normals from a run of daily rows spanning many years.
  *
  * Each calendar day is first averaged across the years, then smoothed with a
  * centred moving average of ±`halfWindow` days that wraps around the year end
  * (31 Dec sits next to 1 Jan). Thirty samples per day are too few on their own —
  * precipitation especially would give a jagged "normal" where one wet year
- * decides a date — and 29 Feb only has the leap years. A day with no samples
- * for a measure is skipped in the average rather than counted as zero.
+ * decides a date — and 29 Feb only has the leap years.
  */
 export function computeNormals(rows: PublicRow[], halfWindow = 7): NormalRow[] {
   const slot = new Map(MD_AXIS.map((md, i) => [md, i]));
-  const raw = PUBLIC_FIELDS.map(f => {
-    const sum = new Array<number>(MD_AXIS.length).fill(0);
-    const n = new Array<number>(MD_AXIS.length).fill(0);
+  const len = MD_AXIS.length;
+
+  // Pass 1: every year's reading for a calendar day, collected into that day's
+  // slot, then averaged — one figure per day per measure, or null for a day the
+  // archive has nothing for.
+  const daily = PUBLIC_FIELDS.map(f => {
+    const samples: (number | null)[][] = MD_AXIS.map(() => []);
     for (const r of rows) {
       const i = slot.get(r.date.slice(5));
-      const v = r[f];
-      if (i === undefined || v == null) continue;
-      sum[i] += v;
-      n[i]++;
+      if (i !== undefined) samples[i].push(r[f]);
     }
-    return sum.map((s, i) => (n[i] ? s / n[i] : null));
+    return samples.map(meanOf);
   });
 
-  const len = MD_AXIS.length;
+  // Pass 2: each day's figure smoothed over the ±halfWindow days around it,
+  // wrapping at the year end.
+  const offsets = Array.from({ length: halfWindow * 2 + 1 }, (_, k) => k - halfWindow);
   return MD_AXIS.map((md, i) => {
     const row = { md } as NormalRow;
     PUBLIC_FIELDS.forEach((f, fi) => {
-      let total = 0;
-      let count = 0;
-      for (let k = -halfWindow; k <= halfWindow; k++) {
-        const v = raw[fi][(i + k + len) % len];
-        if (v == null) continue;
-        total += v;
-        count++;
-      }
-      row[f] = count ? round(total / count) : null;
+      const smoothed = meanOf(offsets.map(k => daily[fi][(i + k + len) % len]));
+      row[f] = smoothed == null ? null : round(smoothed);
     });
     return row;
   });
