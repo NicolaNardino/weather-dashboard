@@ -1941,6 +1941,13 @@ function renderYoySummary(data: YoyResponse): void {
 interface YtdYear { year: number; days: { md: string; total: number }[] }
 
 const YTD_CHART = 'ytd-chart';
+/**
+ * The line under the heading, which doubles as this chart's status line. Named
+ * beside the canvas it sits over, rather than spelled out as a literal at the
+ * four points that touch it — once in the shell that creates it and three times
+ * in the loader that writes to it, which also looked it up three times over.
+ */
+const YTD_NOTE = 'ytd-note';
 
 /** Every MM-DD of a leap year — the shared x-axis, so 29 Feb has a slot. */
 const YTD_AXIS: string[] = Array.from({ length: 366 }, (_, i) =>
@@ -1953,7 +1960,7 @@ function renderYtdShell(): void {
   setHtml('yoy-ytd', cardWell({
     cls: 'mb-3',
     body: `<h6 class="card-title text-muted mb-1">${withUnit('Year-to-date precipitation', 'precip')}</h6>
-      <div id="ytd-note" class="small text-muted mb-2"></div>
+      <div id="${YTD_NOTE}" class="small text-muted mb-2"></div>
       <canvas id="${YTD_CHART}" height="60"></canvas>`,
   }));
 }
@@ -1961,13 +1968,14 @@ function renderYtdShell(): void {
 async function loadYtd(): Promise<void> {
   // The note under the heading doubles as this chart's status line, the way
   // both overlays already report through one of their own.
+  const note = el(YTD_NOTE);
   const data = await loadInto<{ years: YtdYear[] }>(
-    el('ytd-note'), '/api/precip-ytd', 'Loading…', 'Could not load',
+    note, '/api/precip-ytd', 'Loading…', 'Could not load',
   );
   if (!data) return;
   const { years } = data;
   if (!years.length) {
-    el('ytd-note').textContent = 'No data yet.';
+    note.textContent = 'No data yet.';
     destroyChart(YTD_CHART);
     return;
   }
@@ -1976,7 +1984,7 @@ async function loadYtd(): Promise<void> {
   // day-of-year, e.g. "As of Sep 27: 2026 612 mm · 2025 98 mm (from Sep 1)".
   const asOf = last(last(years)!.days)!.md;
   const unit = unitOf('precip');
-  el('ytd-note').textContent = `As of ${mdLabel(asOf)}: ` + [...years].reverse().map(y => {
+  note.textContent = `As of ${mdLabel(asOf)}: ` + [...years].reverse().map(y => {
     const upTo = y.days.filter(d => d.md <= asOf);
     const total = last(upTo)?.total;
     const partial = y.days[0].md !== '01-01' ? ` (from ${mdLabel(y.days[0].md)})` : '';
