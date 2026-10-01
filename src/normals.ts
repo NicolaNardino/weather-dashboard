@@ -1,3 +1,4 @@
+import { eachDay } from './dates';
 import { PUBLIC_FIELDS, PublicField, PublicRow, round } from './db';
 
 /**
@@ -15,9 +16,16 @@ export const NORMALS_PERIOD = {
   label: '1991–2020 (ERA5)',
 };
 
-/** Every `MM-DD` of a leap year, in calendar order — so 29 Feb has a slot. */
-export const MD_AXIS: string[] = Array.from({ length: 366 }, (_, i) =>
-  new Date(Date.UTC(2024, 0, 1 + i)).toISOString().slice(5, 10));
+/**
+ * Every `MM-DD` of a leap year, in calendar order — so 29 Feb has a slot.
+ *
+ * Walked with `eachDay`, which is the module that already owns "everything
+ * UTC, built once": this was the only calendar arithmetic left outside it, and
+ * it re-derived the whole chain itself — that a year's days can be counted off
+ * from 1 January, that 366 of them covers a leap year, and that a `Date` has to
+ * go through `toISOString` before it reads as a stored day.
+ */
+export const MD_AXIS: string[] = eachDay('2024-01-01', '2024-12-31').map(d => d.slice(5));
 
 /**
  * The mean of the values that are actually there, or null when none is — the one

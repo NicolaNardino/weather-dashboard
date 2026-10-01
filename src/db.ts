@@ -150,8 +150,6 @@ export function weekWindow(year: number, week: number): Window {
 /** The rows inside a window — every period query is one of these. */
 export const queryWindow = (w: Window): WeatherRow[] => queryRange(w.from, w.to);
 
-export const queryYear = (year: number): WeatherRow[] => queryWindow(yearWindow(year));
-
 /** Every stored row. Only the import needs this — it diffs against what's there. */
 export function queryAllRows(): WeatherRow[] {
   return all<WeatherRow>('SELECT * FROM weather');
@@ -317,7 +315,7 @@ export function longestSpell(rows: WeatherRow[], test: (r: WeatherRow) => boolea
 export function precipYtd(): { year: number; days: { md: string; total: number }[] }[] {
   return queryYears().map(year => {
     let total = 0;
-    const days = queryYear(year).map(r => {
+    const days = queryWindow(yearWindow(year)).map(r => {
       total += r.precip;
       return { md: r.date.slice(5), total: round(total) };
     });
