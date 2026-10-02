@@ -413,6 +413,42 @@ const api = (path: string, params: Params): string =>
     .map(([k, v]) => `${k}=${encodeURIComponent(v ?? '')}`)
     .join('&');
 
+/**
+ * The parts of a stored `YYYY-MM-DD` day, named.
+ *
+ * Every date on this page is one of those strings, and eight places cut a piece
+ * out of one by character position — `slice(0, 4)` for the year picker's pool,
+ * `slice(0, 7)` for the month a calendar row is, `slice(5)` for the chart
+ * labels, `slice(8, 10)` for a day's slot in its month, and two more
+ * (`slice(0, 2)`, `slice(3)`) for the halves of an `MM-DD` key. Each asserts the
+ * layout of a stored date again, and says where to cut rather than what is
+ * being cut out.
+ */
+const yearOf = (iso: string): string => iso.slice(0, 4);
+const monthOf = (iso: string): string => iso.slice(0, 7);
+/** The `MM-DD` of a day — the within-year key the year-over-year views share. */
+const mdOf = (iso: string): string => iso.slice(5);
+/** The day of the month, as a number: "2026-04-07" → 7. */
+const dayOf = (iso: string): number => Number(iso.slice(8, 10));
+/** The two parts of an `MM-DD` key, as numbers: "09-27" → 9 and 27. */
+const mdMonthNo = (md: string): number => Number(md.slice(0, 2));
+const mdDayNo = (md: string): number => Number(md.slice(3));
+
+/**
+ * A stored day as its UTC-midnight instant, and an instant back as a day — the
+ * pair every step along the calendar here goes through.
+ *
+ * The two places that take such a step each spelled the whole chain out, in
+ * opposite directions: the coverage runs bolted a `T00:00:00Z` suffix onto a day
+ * and added a literal 86 400 000, while the year-to-date axis started from
+ * `Date.UTC` and sliced the result. UTC on purpose, as in `src/dates.ts` on the
+ * server side — stepping a day in local time repeats a date across a DST
+ * boundary.
+ */
+const MS_PER_DAY = 86_400_000;
+const utcMs = (iso: string): number => Date.parse(`${iso}T00:00:00Z`);
+const isoDay = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
+
 /** "2026-04-07" → that day as a local Date (the pickers all work in local time). */
 function localDate(iso: string): Date {
   const [y, m, d] = iso.split('-').map(Number);
@@ -469,7 +505,7 @@ const monthName = (month: number): string => MONTH_NAMES[month - 1];
  * labels both its points and its month ticks from that key, and each parsed the
  * two-digit month out and shifted it for the list on its own.
  */
-const mdMonth = (md: string): string => monthName(Number(md.slice(0, 2)));
+const mdMonth = (md: string): string => monthName(mdMonthNo(md));
 
 /** Whether an `MM-DD` key is the first of its month — where the year-to-date
     axis puts a tick, and the only place it draws a grid line. */
@@ -763,7 +799,7 @@ function renderControls(): void {
 
 function yearSelect(onChange: () => void): HTMLSelectElement {
   const thisYear = String(new Date().getFullYear());
-  const years = [...new Set(allDates.map(d => d.slice(0, 4)))];
+  const years = [...new Set(allDates.map(yearOf))];
   return poolSelect(years.length ? years : [thisYear], onChange);
 }
 
@@ -1144,7 +1180,7 @@ function chartCard(o: {
 
 // --- Charts ---
 function labels(rows: WeatherRow[]): string[] {
-  return rows.map(r => r.date.slice(5)); // MM-DD
+  return rows.map(r => mdOf(r.date));
 }
 
 function renderCharts(rows: WeatherRow[]): void {
@@ -1201,8 +1237,7 @@ function renderTable(rows: WeatherRow[]): void {
 interface Coverage { expected: number; recorded: number; missing: string[] }
 
 /** The `YYYY-MM-DD` day after `iso`, in UTC — what makes two dates consecutive. */
-const nextDay = (iso: string): string =>
-  new Date(Date.parse(`${iso}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+const nextDay = (iso: string): string => isoDay(utcMs(iso) + MS_PER_DAY);
 
 /**
  * Consecutive dates folded into runs: "2026-08-03 → 2026-08-06, 2026-09-01".
@@ -1331,7 +1366,7 @@ function renderCalendar(rows: WeatherRow[], missing: string[]): void {
   calRows = rows;
   calMissing = missing;
   const gaps = new Set(missing);
-  const months = [...new Set(rows.map(r => r.date.slice(0, 7)))];
+  const months = [...new Set(rows.map(r => monthOf(r.date)))];
   const box = el('calendar');
   if (months.length < 2) {
     box.innerHTML = '';
@@ -1343,15 +1378,23 @@ function renderCalendar(rows: WeatherRow[], missing: string[]): void {
   const scale = calScale(m, rows.map(r => r[m.field]));
   const days = oneTo(31);
 
-  const head = `<div></div>${days.map(d => `<div class="cal-head">${d}</div>`).join('')}`;
+  // A cell with nothing in it: the corner above the month labels, a day past
+  // the end of a short month, and a day outside the recorded span (which is NOT
+  // a gap — see above) are all the same empty grid slot, spelled out three ways.
+  const blank = '<div></div>';
+  const head = `${blank}${days.map(d => `<div class="cal-head">${d}</div>`).join('')}`;
   const body = months.map(ym => {
     const [y, mo] = ym.split('-').map(Number);
     const inMonth = new Date(y, mo, 0).getDate();
     const cells = days.map(d => {
-      if (d > inMonth) return '<div></div>';
+      if (d > inMonth) return blank;
       const date = `${ym}-${String(d).padStart(2, '0')}`;
       const r = byDate.get(date);
-      if (!r) return gaps.has(date) ? `<div class="cal-day cal-missing" title="${date} · missing"></div>` : '<div></div>';
+      if (!r) {
+        return gaps.has(date)
+          ? `<div class="cal-day cal-missing" title="${date} · missing"></div>`
+          : blank;
+      }
       const v = r[m.field];
       return `<div class="cal-day" data-date="${date}" style="background:${scale.color(v)}"
         title="${date} · ${v} ${scale.unit}"></div>`;
@@ -1759,7 +1802,7 @@ const YOY_UNITS = {
   month: {
     label: 'Month',
     ...paramPickers(loadYoy, [['month', monthSelect]]),
-    pos: r => Number(r.date.slice(8, 10)),               // day of month, 1..31
+    pos: r => dayOf(r.date),                             // day of month, 1..31
     axis: () => {
       const positions = oneTo(31);
       return { positions, labels: positions.map(String) };
@@ -1951,10 +1994,10 @@ const YTD_NOTE = 'ytd-note';
 
 /** Every MM-DD of a leap year — the shared x-axis, so 29 Feb has a slot. */
 const YTD_AXIS: string[] = Array.from({ length: 366 }, (_, i) =>
-  new Date(Date.UTC(2024, 0, 1 + i)).toISOString().slice(5, 10));
+  mdOf(isoDay(utcMs('2024-01-01') + i * MS_PER_DAY)));
 
 /** "Sep 27" for "09-27". */
-const mdLabel = (md: string) => `${mdMonth(md)} ${Number(md.slice(3))}`;
+const mdLabel = (md: string) => `${mdMonth(md)} ${mdDayNo(md)}`;
 
 function renderYtdShell(): void {
   setHtml('yoy-ytd', cardWell({
