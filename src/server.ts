@@ -1,6 +1,6 @@
 import express, { Request, Response } from 'express';
 import path from 'path';
-import { dayCount, eachDay, isoDay, ymd } from './dates';
+import { dayCount, eachDay, isoDay, mdOf, ymd } from './dates';
 import { computeNormals, MD_AXIS, NormalRow, NORMALS_PERIOD } from './normals';
 import { DATA_FILE, describeImport, importFile } from './import';
 import {
@@ -31,6 +31,18 @@ const OPEN_METEO_DAILY: Record<PublicField, string> = {
   precip: 'precipitation_sum',
 };
 
+/**
+ * A `PublicRow` from one reading per field.
+ *
+ * Both producers of these rows build exactly that — a fetched day out of
+ * Open-Meteo's parallel arrays, and a day of the Compare window out of the
+ * long-term normals — and each spelled the same `Object.fromEntries` over
+ * PUBLIC_FIELDS out with the same cast behind it, since `fromEntries` types its
+ * result as a plain `Record<string, …>` whichever way it is written.
+ */
+const publicRow = (date: string, read: (field: PublicField) => number | null): PublicRow =>
+  ({ date, ...Object.fromEntries(PUBLIC_FIELDS.map(f => [f, read(f)])) }) as PublicRow;
+
 /** Open-Meteo's two daily endpoints: recent days and forecasts, and the ERA5
     reanalysis archive going back to 1940 that the long-term normals come from. */
 const OPEN_METEO = {
@@ -57,12 +69,8 @@ async function fetchOpenMeteo(
   // Open-Meteo returns each measure as its own parallel array; a measure the
   // API omitted is missing rather than null, so every read needs the same
   // cast-and-default.
-  return time.map((date, i) => ({
-    date,
-    ...Object.fromEntries(PUBLIC_FIELDS.map(f =>
-      [f, (d[OPEN_METEO_DAILY[f]] as number[] | undefined)?.[i] ?? null],
-    )),
-  })) as PublicRow[];
+  return time.map((date, i) =>
+    publicRow(date, f => (d[OPEN_METEO_DAILY[f]] as number[] | undefined)?.[i] ?? null));
 }
 
 /** The one in-flight normals download, shared by concurrent requests. */
@@ -222,8 +230,8 @@ app.get('/api/compare', async (req, res) => {
   });
   const byMd = new Map(normals.map(n => [n.md, n]));
   const normalRows = eachDay(from, to).flatMap(date => {
-    const n = byMd.get(date.slice(5));
-    return n ? [{ date, ...Object.fromEntries(PUBLIC_FIELDS.map(f => [f, n[f]])) } as PublicRow] : [];
+    const n = byMd.get(mdOf(date));
+    return n ? [publicRow(date, f => n[f])] : [];
   });
 
   // Every reply pairs my rows with the public ones over the same window.

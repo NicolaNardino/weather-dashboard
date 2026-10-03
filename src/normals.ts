@@ -1,4 +1,4 @@
-import { eachDay } from './dates';
+import { eachDay, mdOf } from './dates';
 import { PUBLIC_FIELDS, PublicField, PublicRow, round } from './db';
 
 /**
@@ -25,7 +25,7 @@ export const NORMALS_PERIOD = {
  * from 1 January, that 366 of them covers a leap year, and that a `Date` has to
  * go through `toISOString` before it reads as a stored day.
  */
-export const MD_AXIS: string[] = eachDay('2024-01-01', '2024-12-31').map(d => d.slice(5));
+export const MD_AXIS: string[] = eachDay('2024-01-01', '2024-12-31').map(mdOf);
 
 /**
  * The mean of the values that are actually there, or null when none is — the one
@@ -68,7 +68,7 @@ export function computeNormals(rows: PublicRow[], halfWindow = 7): NormalRow[] {
   const daily = PUBLIC_FIELDS.map(f => {
     const samples: (number | null)[][] = MD_AXIS.map(() => []);
     for (const r of rows) {
-      const i = slot.get(r.date.slice(5));
+      const i = slot.get(mdOf(r.date));
       if (i !== undefined) samples[i].push(r[f]);
     }
     return samples.map(meanOf);

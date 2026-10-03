@@ -5,7 +5,8 @@
  * calendar parts, and the ISO day of a `Date` — and each spelled them out
  * itself: `db.ts` padded the month inline and kept a local `isoDate`, while
  * `server.ts` kept its own `pad2` and wrote `.toISOString().slice(0, 10)` twice
- * more.
+ * more. Reading a *piece* of a stored date back out went the same way, which is
+ * what `mdOf` below is.
  *
  * Everything here is UTC. Stored dates are compared as strings, so building
  * them in local time shifted them a day either side of midnight for anyone west
@@ -20,6 +21,18 @@ export const ymd = (year: number, month: number, day: number): string =>
 
 /** A `Date` as its UTC `YYYY-MM-DD` day. */
 export const isoDay = (d: Date): string => d.toISOString().slice(0, 10);
+
+/**
+ * The `MM-DD` of a stored day — the within-year key the long-term normals are
+ * keyed by, and the slot a day fills on a Jan–Dec axis.
+ *
+ * Three places cut it out of a date by character position: `normals.ts` both
+ * where it builds its calendar axis and where it files a reading under one, and
+ * the Compare route where it reads a normal back out for a day of the window.
+ * Each says where to cut rather than what is being cut out, which is the same
+ * reason `ymd` and `isoDay` above are named rather than spelled out.
+ */
+export const mdOf = (iso: string): string => iso.slice(5);
 
 /**
  * A stored `YYYY-MM-DD` day as the `Date` at its UTC midnight — the inverse of
