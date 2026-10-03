@@ -436,18 +436,27 @@ const mdDayNo = (md: string): number => Number(md.slice(3));
 
 /**
  * A stored day as its UTC-midnight instant, and an instant back as a day — the
- * pair every step along the calendar here goes through.
+ * pair every step along the calendar here goes through, and the one `dayPlus`
+ * below is the whole of. UTC on purpose, as in `src/dates.ts` on the server
+ * side: stepping a day in local time repeats a date across a DST boundary.
  *
- * The two places that take such a step each spelled the whole chain out, in
- * opposite directions: the coverage runs bolted a `T00:00:00Z` suffix onto a day
- * and added a literal 86 400 000, while the year-to-date axis started from
- * `Date.UTC` and sliced the result. UTC on purpose, as in `src/dates.ts` on the
- * server side — stepping a day in local time repeats a date across a DST
- * boundary.
+ * `MS_PER_DAY` is also the week number's divisor, which had the same 86 400 000
+ * written out as a bare literal — the only other place on this page that
+ * measures a span in days.
  */
 const MS_PER_DAY = 86_400_000;
 const utcMs = (iso: string): number => Date.parse(`${iso}T00:00:00Z`);
 const isoDay = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
+
+/**
+ * `iso` shifted by `days`, as a stored day again.
+ *
+ * The two places that step along the calendar each spelled that whole chain out
+ * themselves, differing only in how many days: the coverage runs added one
+ * day's worth of milliseconds to ask what makes two dates consecutive, and the
+ * year-to-date axis multiplied by an index to count 366 of them off 1 January.
+ */
+const dayPlus = (iso: string, days: number): string => isoDay(utcMs(iso) + days * MS_PER_DAY);
 
 /** "2026-04-07" → that day as a local Date (the pickers all work in local time). */
 function localDate(iso: string): Date {
@@ -814,7 +823,7 @@ function refDate(): Date {
 function isoWeek(d: Date): number {
   const jan4 = new Date(d.getFullYear(), 0, 4);
   const diff = d.getTime() - jan4.getTime();
-  return Math.ceil((diff / 86400000 + (jan4.getDay() || 7)) / 7);
+  return Math.ceil((diff / MS_PER_DAY + (jan4.getDay() || 7)) / 7);
 }
 
 /**
@@ -1237,7 +1246,7 @@ function renderTable(rows: WeatherRow[]): void {
 interface Coverage { expected: number; recorded: number; missing: string[] }
 
 /** The `YYYY-MM-DD` day after `iso`, in UTC — what makes two dates consecutive. */
-const nextDay = (iso: string): string => isoDay(utcMs(iso) + MS_PER_DAY);
+const nextDay = (iso: string): string => dayPlus(iso, 1);
 
 /**
  * Consecutive dates folded into runs: "2026-08-03 → 2026-08-06, 2026-09-01".
@@ -1993,8 +2002,7 @@ const YTD_CHART = 'ytd-chart';
 const YTD_NOTE = 'ytd-note';
 
 /** Every MM-DD of a leap year — the shared x-axis, so 29 Feb has a slot. */
-const YTD_AXIS: string[] = Array.from({ length: 366 }, (_, i) =>
-  mdOf(isoDay(utcMs('2024-01-01') + i * MS_PER_DAY)));
+const YTD_AXIS: string[] = Array.from({ length: 366 }, (_, i) => mdOf(dayPlus('2024-01-01', i)));
 
 /** "Sep 27" for "09-27". */
 const mdLabel = (md: string) => `${mdMonth(md)} ${mdDayNo(md)}`;
