@@ -26,11 +26,12 @@ export const isoDay = (d: Date): string => d.toISOString().slice(0, 10);
  * The `MM-DD` of a stored day — the within-year key the long-term normals are
  * keyed by, and the slot a day fills on a Jan–Dec axis.
  *
- * Three places cut it out of a date by character position: `normals.ts` both
- * where it builds its calendar axis and where it files a reading under one, and
- * the Compare route where it reads a normal back out for a day of the window.
- * Each says where to cut rather than what is being cut out, which is the same
- * reason `ymd` and `isoDay` above are named rather than spelled out.
+ * Four places cut it out of a date by character position: `normals.ts` both
+ * where it builds its calendar axis and where it files a reading under one, the
+ * Compare route where it reads a normal back out for a day of the window, and
+ * the year-to-date rain totals where it labels each day's running figure. Each
+ * says where to cut rather than what is being cut out, which is the same reason
+ * `ymd` and `isoDay` above are named rather than spelled out.
  */
 export const mdOf = (iso: string): string => iso.slice(5);
 
