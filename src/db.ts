@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import path from 'path';
-import { addDays, dayCount, eachDay, isoDay, ymd } from './dates';
+import { addDays, dayCount, eachDay, isoDay, mdOf, ymd } from './dates';
 import type { NormalRow } from './normals';
 
 // WEATHER_DB lets the tests point the app at a throwaway database.
@@ -317,7 +317,7 @@ export function precipYtd(): { year: number; days: { md: string; total: number }
     let total = 0;
     const days = queryWindow(yearWindow(year)).map(r => {
       total += r.precip;
-      return { md: r.date.slice(5), total: round(total) };
+      return { md: mdOf(r.date), total: round(total) };
     });
     return { year, days };
   });
