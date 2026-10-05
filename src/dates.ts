@@ -58,6 +58,17 @@ export const addDays = (d: Date, days: number): Date => {
   return shifted;
 };
 
+/**
+ * The stored day after `iso` — "what has to come next for two days to be
+ * consecutive", which is the only thing either caller wants to know.
+ *
+ * Both asked it the long way round. `eachDay` below carried a `Date` cursor and
+ * converted it to a day twice per step, to produce a list of days it was handed
+ * days to bound; and the wet/dry spells in `db.ts` asked whether `dayCount` of
+ * the pair came to 2, which is a span measured in order to test an adjacency.
+ */
+export const nextDay = (iso: string): string => isoDay(addDays(utcDay(iso), 1));
+
 /** How many calendar days `[from, to]` spans, both ends included. */
 export const dayCount = (from: string, to: string): number =>
   Math.round((utcDay(to).getTime() - utcDay(from).getTime()) / MS_PER_DAY) + 1;
@@ -65,6 +76,6 @@ export const dayCount = (from: string, to: string): number =>
 /** Every `YYYY-MM-DD` day in `[from, to]`, both ends included; empty if from > to. */
 export function eachDay(from: string, to: string): string[] {
   const days: string[] = [];
-  for (let d = utcDay(from); isoDay(d) <= to; d = addDays(d, 1)) days.push(isoDay(d));
+  for (let d = from; d <= to; d = nextDay(d)) days.push(d);
   return days;
 }
