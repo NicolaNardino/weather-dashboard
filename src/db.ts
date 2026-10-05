@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import path from 'path';
-import { addDays, dayCount, eachDay, isoDay, mdOf, ymd } from './dates';
+import { addDays, eachDay, isoDay, mdOf, nextDay, ymd } from './dates';
 import type { NormalRow } from './normals';
 
 // WEATHER_DB lets the tests point the app at a throwaway database.
@@ -298,8 +298,14 @@ export function longestSpell(rows: WeatherRow[], test: (r: WeatherRow) => boolea
   let len = 0;
   let prev = '';
   for (const r of rows) {
-    if (!test(r)) { len = 0; prev = r.date; continue; }
-    if (len && dayCount(prev, r.date) === 2) len++;
+    // Three ways a day lands: it doesn't qualify and ends the run, it qualifies
+    // and follows the open run's last day, or it qualifies and opens a new run.
+    // The first used to `continue` out of the loop so that it could record `prev`
+    // on the way — which meant that one assignment written twice, and a branch
+    // whose only job was to skip a `best` update that a zero-length run can't
+    // win anyway.
+    if (!test(r)) len = 0;
+    else if (len && nextDay(prev) === r.date) len++;
     else { len = 1; start = r.date; }
     prev = r.date;
     if (len > best.days) best = { days: len, from: start, to: r.date };
