@@ -1355,13 +1355,18 @@ function calScale(m: CalMetric, values: number[]) {
   }
   const mid = mean(values);
   const span = Math.max(hi - mid, mid - lo) || 1;
+  // The legend bar is this scale read at its own two ends, so it is drawn from
+  // `color` rather than blending the stops a second time: the gradient used to
+  // restate both `mix` calls with the distance to each end worked out by hand,
+  // which is the same blend the colour of `lo` and of `hi` already is.
+  const color = (v: number) => {
+    const t = (v - mid) / span;
+    return t < 0 ? mix(CAL_COLORS.mid, CAL_COLORS.cold, -t) : mix(CAL_COLORS.mid, CAL_COLORS.warm, t);
+  };
   return {
     unit,
-    color: (v: number) => {
-      const t = (v - mid) / span;
-      return t < 0 ? mix(CAL_COLORS.mid, CAL_COLORS.cold, -t) : mix(CAL_COLORS.mid, CAL_COLORS.warm, t);
-    },
-    gradient: `${mix(CAL_COLORS.mid, CAL_COLORS.cold, (mid - lo) / span)}, ${CAL_COLORS.mid}, ${mix(CAL_COLORS.mid, CAL_COLORS.warm, (hi - mid) / span)}`,
+    color,
+    gradient: `${color(lo)}, ${CAL_COLORS.mid}, ${color(hi)}`,
     ticks: [fmt(lo), `mean ${fmt(mid)}`, fmt(hi)],
   };
 }

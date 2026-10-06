@@ -300,18 +300,21 @@ app.get('/api/across-years', (req, res) => {
   const q = requireQuery(req, res, spec.needs, Number);
   if (!q) return;
 
-  const years = queryYears()
-    .map(year => {
-      const w = spec.window(q, year);
-      return { year, rows: queryWindow(w), total: dayCount(w.from, w.to) };
-    })
-    .filter(x => x.rows.length)
-    .map(({ year, rows, total }) => ({
+  // One pass per year: a year with no rows for the period drops out, and one
+  // with rows is reported there and then. Written as map/filter/map it needed
+  // an intermediate `{ year, rows, total }` whose only job was to carry the
+  // calendar length across the filter and be spread back out on the far side.
+  const years = queryYears().flatMap(year => {
+    const w = spec.window(q, year);
+    const rows = queryWindow(w);
+    if (!rows.length) return [];
+    return [{
       year,
       rows,
       stats: aggregateStats(rows),
-      days: { recorded: rows.length, total },
-    }));
+      days: { recorded: rows.length, total: dayCount(w.from, w.to) },
+    }];
+  });
 
   res.json({ unit, label: spec.label(q), years });
 });
