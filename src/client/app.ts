@@ -521,24 +521,35 @@ const mdMonth = (md: string): string => monthName(mdMonthNo(md));
 const isMonthStart = (md: string | undefined): boolean => !!md?.endsWith('-01');
 
 /**
+ * Every day number a month can have, 1..31.
+ *
+ * Three places said 31 for themselves — the day picker below, the calendar
+ * heatmap's columns and the Across-Years month axis — each re-deciding that the
+ * longest month is the one a day-of-month slot list has to cover. They are the
+ * same list: a row of the heatmap IS a month, and the month axis plots a row
+ * per year on the same slots.
+ */
+const MONTH_DAYS = oneTo(31);
+
+/**
  * Build one of the numbered pickers the dashboard and the year-over-year view
- * share: options numbered 1..`count` labelled by `label`, pre-selected to the
- * reference date's own value for that unit (so a fresh load lands on populated
- * data — see `refDate`).
+ * share: one option per slot in `slots`, labelled by `label`, pre-selected to
+ * the reference date's own value for that unit (so a fresh load lands on
+ * populated data — see `refDate`).
  *
  * The option list is built here, once — the calendar doesn't change — rather
  * than on every render. Each picker used to declare its list and its default
  * separately, so the two halves of one picker sat apart and a default could end
  * up naming a value its own list didn't offer.
  */
-function numberedSelect(count: number, label: (n: number) => string, of: (d: Date) => number) {
-  const options = oneTo(count).map(n => ({ value: String(n), label: label(n) }));
+function numberedSelect(slots: number[], label: (n: number) => string, of: (d: Date) => number) {
+  const options = slots.map(n => ({ value: String(n), label: label(n) }));
   return (onChange: () => void) => mkSelect(options, String(of(refDate())), onChange);
 }
 
-const weekSelect = numberedSelect(53, n => `Week ${n}`, isoWeek);
-const monthSelect = numberedSelect(12, monthName, d => d.getMonth() + 1);
-const daySelect = numberedSelect(31, String, d => d.getDate());
+const weekSelect = numberedSelect(oneTo(53), n => `Week ${n}`, isoWeek);
+const monthSelect = numberedSelect(oneTo(12), monthName, d => d.getMonth() + 1);
+const daySelect = numberedSelect(MONTH_DAYS, String, d => d.getDate());
 
 /** A small dimmed caption sitting next to a picker. */
 const mutedLabel = (text: string) =>
@@ -840,12 +851,26 @@ async function reloadDates(): Promise<void> {
 }
 
 // --- Load data ---
+
+/**
+ * What every period route answers with — the rows in the period, the stat-card
+ * figures over them, and how completely the period is recorded.
+ *
+ * Named, because the loader below had to declare its variable before the `try`
+ * that fills it in order to use it after, and so wrote the shape out as that
+ * declaration's type and then referred back to it as `typeof data`. The two
+ * other things a loader on this page fetches (`Stats`, `Coverage`) are named
+ * interfaces already; this is the one that holds them.
+ */
+interface PeriodData { rows: WeatherRow[]; stats: Stats; coverage: Coverage }
+
 async function load(): Promise<void> {
-  let data: { rows: WeatherRow[]; stats: Stats; coverage: Coverage };
-  try {
-    const url = api(period, PERIOD_STRIP.params(period));
-    data = await fetchJson<typeof data>(url);
-  } catch {
+  // The same fetch-or-null the two overlays' `loadInto` already does, so the
+  // happy path reads straight down rather than out of a `try` that assigns to
+  // a variable declared above it.
+  const data = await fetchJson<PeriodData>(api(period, PERIOD_STRIP.params(period)))
+    .catch(() => null);
+  if (!data) {
     // A period the server has no data for (the day route 404s) — blank the
     // dashboard rather than leaving the previous period's rows on screen.
     lastRows = [];
@@ -1390,17 +1415,16 @@ function renderCalendar(rows: WeatherRow[], missing: string[]): void {
   const m = CAL_METRICS.find(x => x.field === calMetric) ?? CAL_METRICS[0];
   const byDate = new Map(rows.map(r => [r.date, r]));
   const scale = calScale(m, rows.map(r => r[m.field]));
-  const days = oneTo(31);
 
   // A cell with nothing in it: the corner above the month labels, a day past
   // the end of a short month, and a day outside the recorded span (which is NOT
   // a gap — see above) are all the same empty grid slot, spelled out three ways.
   const blank = '<div></div>';
-  const head = `${blank}${days.map(d => `<div class="cal-head">${d}</div>`).join('')}`;
+  const head = `${blank}${MONTH_DAYS.map(d => `<div class="cal-head">${d}</div>`).join('')}`;
   const body = months.map(ym => {
     const [y, mo] = ym.split('-').map(Number);
     const inMonth = new Date(y, mo, 0).getDate();
-    const cells = days.map(d => {
+    const cells = MONTH_DAYS.map(d => {
       if (d > inMonth) return blank;
       const date = `${ym}-${String(d).padStart(2, '0')}`;
       const r = byDate.get(date);
@@ -1817,10 +1841,7 @@ const YOY_UNITS = {
     label: 'Month',
     ...paramPickers(loadYoy, [['month', monthSelect]]),
     pos: r => dayOf(r.date),                             // day of month, 1..31
-    axis: () => {
-      const positions = oneTo(31);
-      return { positions, labels: positions.map(String) };
-    },
+    axis: () => ({ positions: MONTH_DAYS, labels: MONTH_DAYS.map(String) }),
   },
 } satisfies Record<string, YoyUnitSpec>;
 
