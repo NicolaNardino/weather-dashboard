@@ -1325,12 +1325,13 @@ const CAL_METRICS: CalMetric[] = [
 
 /** The heatmap ramps, for a dark surface. Sequential runs dark → light (more
     reads brighter); diverging is blue ↔ red through a neutral gray, and a dry
-    day sits at a neutral step of its own so "none" never reads as "a little". */
+    day sits at a neutral step of its own so "none" never reads as "a little".
+    Both are stop lists for `ramp` below: the diverging one named its three
+    stops separately and was blended by hand, which is the same walk along a
+    ramp that the sequential one already asks for by name. */
 const CAL_COLORS = {
   seq: ['#184f95', '#3987e5', '#86b6ef', '#cde2fb'],
-  cold: '#3987e5',
-  mid: '#383835',
-  warm: '#e0524f',
+  div: ['#3987e5', '#383835', '#e0524f'],
   none: '#2b2b33',
 };
 
@@ -1380,18 +1381,17 @@ function calScale(m: CalMetric, values: number[]) {
   }
   const mid = mean(values);
   const span = Math.max(hi - mid, mid - lo) || 1;
-  // The legend bar is this scale read at its own two ends, so it is drawn from
-  // `color` rather than blending the stops a second time: the gradient used to
-  // restate both `mix` calls with the distance to each end worked out by hand,
-  // which is the same blend the colour of `lo` and of `hi` already is.
-  const color = (v: number) => {
-    const t = (v - mid) / span;
-    return t < 0 ? mix(CAL_COLORS.mid, CAL_COLORS.cold, -t) : mix(CAL_COLORS.mid, CAL_COLORS.warm, t);
-  };
+  // Distance from the mean, in spans, as a position along the cold→mid→warm
+  // ramp: -1 lands on the first stop, 0 on the middle one, +1 on the last.
+  // Written as a sign test picking which pair of stops to blend, it asked
+  // `ramp`'s own question a second time — and left `mid` reachable only by
+  // naming the middle stop, which is why the legend bar below could not read
+  // its own centre off the scale the way it reads its two ends.
+  const color = (v: number) => ramp(CAL_COLORS.div, ((v - mid) / span + 1) / 2);
   return {
     unit,
     color,
-    gradient: `${color(lo)}, ${CAL_COLORS.mid}, ${color(hi)}`,
+    gradient: `${color(lo)}, ${color(mid)}, ${color(hi)}`,
     ticks: [fmt(lo), `mean ${fmt(mid)}`, fmt(hi)],
   };
 }
