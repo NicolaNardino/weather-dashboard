@@ -436,7 +436,7 @@ const mdDayNo = (md: string): number => Number(md.slice(3));
 
 /**
  * A stored day as its UTC-midnight instant, and an instant back as a day — the
- * pair every step along the calendar here goes through, and the one `dayPlus`
+ * pair every step along the calendar here goes through, and the one `nextDay`
  * below is the whole of. UTC on purpose, as in `src/dates.ts` on the server
  * side: stepping a day in local time repeats a date across a DST boundary.
  *
@@ -449,14 +449,32 @@ const utcMs = (iso: string): number => Date.parse(`${iso}T00:00:00Z`);
 const isoDay = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
 
 /**
- * `iso` shifted by `days`, as a stored day again.
+ * The `YYYY-MM-DD` day after `iso`, in UTC — what makes two dates consecutive,
+ * and the single step `daysWhile` below walks a run of days with.
  *
- * The two places that step along the calendar each spelled that whole chain out
- * themselves, differing only in how many days: the coverage runs added one
- * day's worth of milliseconds to ask what makes two dates consecutive, and the
- * year-to-date axis multiplied by an index to count 366 of them off 1 January.
+ * It was one day's worth of a general `dayPlus(iso, days)`, because the two
+ * callers stepped by different distances: the coverage runs by a day, and the
+ * year-to-date axis by an index, to count 366 of them off 1 January. With that
+ * axis walked rather than counted, a day is the only distance this page moves.
  */
-const dayPlus = (iso: string, days: number): string => isoDay(utcMs(iso) + days * MS_PER_DAY);
+const nextDay = (iso: string): string => isoDay(utcMs(iso) + MS_PER_DAY);
+
+/**
+ * The run of days from `from` onwards, for as long as `inRange` holds.
+ *
+ * Both lists of calendar slots on this page are that walk, and each counted
+ * its own length off instead: the heatmap's month row from
+ * `new Date(y, mo, 0).getDate()` — the one piece of calendar arithmetic here
+ * done in local time — and the year-to-date axis from a bare 366, which
+ * re-derives that a leap year is that long and that its days can be counted
+ * off 1 January. Asking where the run ends keeps that knowledge in the
+ * `monthOf` / `yearOf` readers which already answer it.
+ */
+function daysWhile(from: string, inRange: (day: string) => boolean): string[] {
+  const days: string[] = [];
+  for (let day = from; inRange(day); day = nextDay(day)) days.push(day);
+  return days;
+}
 
 /** "2026-04-07" → that day as a local Date (the pickers all work in local time). */
 function localDate(iso: string): Date {
@@ -519,6 +537,16 @@ const mdMonth = (md: string): string => monthName(mdMonthNo(md));
 /** Whether an `MM-DD` key is the first of its month — where the year-to-date
     axis puts a tick, and the only place it draws a grid line. */
 const isMonthStart = (md: string | undefined): boolean => !!md?.endsWith('-01');
+
+/**
+ * The days of a week, Monday first — the labels on the Across-Years week axis,
+ * and, through their count, its slot numbers (which that unit's `pos` numbers
+ * Mon=1..Sun=7 to match). The two halves were a seven-item literal beside a
+ * separate `oneTo(7)`, so a week was seven days twice over with nothing
+ * holding the parallel lists the same length. MONTH_DAYS below is the same
+ * list for a month, which the month axis already labels from.
+ */
+const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 /**
  * Every day number a month can have, 1..31.
@@ -1270,9 +1298,6 @@ function renderTable(rows: WeatherRow[]): void {
 // counts: days before the first recording, or not yet imported, don't.
 interface Coverage { expected: number; recorded: number; missing: string[] }
 
-/** The `YYYY-MM-DD` day after `iso`, in UTC — what makes two dates consecutive. */
-const nextDay = (iso: string): string => dayPlus(iso, 1);
-
 /**
  * Consecutive dates folded into runs: "2026-08-03 → 2026-08-06, 2026-09-01".
  * The open run's own last day is what the next date has to follow, so asking
@@ -1397,6 +1422,14 @@ function calScale(m: CalMetric, values: number[]) {
 }
 
 /**
+ * Every stored day of a `YYYY-MM` month, in order — a calendar row's slots.
+ * The heatmap had the month's length and each slot's own date as two separate
+ * derivations from the one key it holds (see `daysWhile`), the second bolting
+ * a hand-padded day number back onto that key.
+ */
+const monthDates = (ym: string): string[] => daysWhile(`${ym}-01`, d => monthOf(d) === ym);
+
+/**
  * `missing` is the period's coverage gaps: those days are dashed. A day with no
  * row that isn't in it lies outside the recorded span (before the station
  * started, or not yet imported) and is left blank, so it doesn't read as a gap.
@@ -1406,9 +1439,8 @@ function renderCalendar(rows: WeatherRow[], missing: string[]): void {
   calMissing = missing;
   const gaps = new Set(missing);
   const months = [...new Set(rows.map(r => monthOf(r.date)))];
-  const box = el('calendar');
   if (months.length < 2) {
-    box.innerHTML = '';
+    setHtml('calendar', '');
     return;
   }
 
@@ -1423,10 +1455,11 @@ function renderCalendar(rows: WeatherRow[], missing: string[]): void {
   const head = `${blank}${MONTH_DAYS.map(d => `<div class="cal-head">${d}</div>`).join('')}`;
   const body = months.map(ym => {
     const [y, mo] = ym.split('-').map(Number);
-    const inMonth = new Date(y, mo, 0).getDate();
+    const dates = monthDates(ym);
     const cells = MONTH_DAYS.map(d => {
-      if (d > inMonth) return blank;
-      const date = `${ym}-${String(d).padStart(2, '0')}`;
+      // A day past the end of a short month has no date to ask about.
+      const date = dates[d - 1];
+      if (!date) return blank;
       const r = byDate.get(date);
       if (!r) {
         return gaps.has(date)
@@ -1440,7 +1473,7 @@ function renderCalendar(rows: WeatherRow[], missing: string[]): void {
     return `<div class="cal-month">${monthName(mo)} ${String(y).slice(2)}</div>${cells.join('')}`;
   }).join('');
 
-  box.innerHTML = cardWell({
+  setHtml('calendar', cardWell({
     cls: 'mb-3',
     body: `<div class="d-flex align-items-center gap-3 mb-2 flex-wrap">
         <h6 class="card-title text-muted mb-0">Calendar</h6>
@@ -1451,7 +1484,7 @@ function renderCalendar(rows: WeatherRow[], missing: string[]): void {
         </div>
       </div>
       <div class="cal-grid">${head}${body}</div>`,
-  });
+  }));
 
   el('cal-picker').append(mkSelect(
     CAL_METRICS.map(x => ({ value: x.field, label: x.label })),
@@ -1831,10 +1864,7 @@ const YOY_UNITS = {
     label: 'Week',
     ...paramPickers(loadYoy, [['week', weekSelect]]),
     pos: r => localDate(r.date).getDay() || 7,           // Mon=1..Sun=7
-    axis: () => ({
-      positions: oneTo(7),
-      labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
-    }),
+    axis: () => ({ positions: oneTo(WEEKDAYS.length), labels: WEEKDAYS }),
   },
 
   month: {
@@ -2028,7 +2058,7 @@ const YTD_CHART = 'ytd-chart';
 const YTD_NOTE = 'ytd-note';
 
 /** Every MM-DD of a leap year — the shared x-axis, so 29 Feb has a slot. */
-const YTD_AXIS: string[] = Array.from({ length: 366 }, (_, i) => mdOf(dayPlus('2024-01-01', i)));
+const YTD_AXIS: string[] = daysWhile('2024-01-01', d => yearOf(d) === '2024').map(mdOf);
 
 /** "Sep 27" for "09-27". */
 const mdLabel = (md: string) => `${mdMonth(md)} ${mdDayNo(md)}`;
