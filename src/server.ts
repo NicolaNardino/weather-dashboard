@@ -7,7 +7,7 @@ import {
   queryRange, queryWindow, coverage, Window,
   dayWindow, weekWindow, monthWindow, yearWindow,
   queryAllDates, queryYears, aggregateStats, getMeta, precipYtd,
-  queryPublicRange, upsertPublic, PublicRow, PublicField, PUBLIC_FIELDS,
+  queryPublicRange, upsertPublic, PublicRow, PublicField, fieldRow,
   queryNormals, upsertNormals,
 } from './db';
 
@@ -30,18 +30,6 @@ const OPEN_METEO_DAILY: Record<PublicField, string> = {
   wind_high: 'wind_speed_10m_max',
   precip: 'precipitation_sum',
 };
-
-/**
- * A `PublicRow` from one reading per field.
- *
- * Both producers of these rows build exactly that — a fetched day out of
- * Open-Meteo's parallel arrays, and a day of the Compare window out of the
- * long-term normals — and each spelled the same `Object.fromEntries` over
- * PUBLIC_FIELDS out with the same cast behind it, since `fromEntries` types its
- * result as a plain `Record<string, …>` whichever way it is written.
- */
-const publicRow = (date: string, read: (field: PublicField) => number | null): PublicRow =>
-  ({ date, ...Object.fromEntries(PUBLIC_FIELDS.map(f => [f, read(f)])) }) as PublicRow;
 
 /** Open-Meteo's two daily endpoints: recent days and forecasts, and the ERA5
     reanalysis archive going back to 1940 that the long-term normals come from. */
@@ -70,8 +58,26 @@ async function fetchOpenMeteo(
   // API omitted is missing rather than null, so every read needs the same
   // cast-and-default.
   return time.map((date, i) =>
-    publicRow(date, f => (d[OPEN_METEO_DAILY[f]] as number[] | undefined)?.[i] ?? null));
+    fieldRow('date', date, f => (d[OPEN_METEO_DAILY[f]] as number[] | undefined)?.[i] ?? null));
 }
+
+/**
+ * Where a Compare reply's public side came from, as the flags that say so on the
+ * wire. The cache/fetch decision below has exactly these three outcomes, and
+ * each was spelled at the point of reply as a `{ cached, stale? }` pair that
+ * `reply` then turned into flags and a source label — so a ternary and a
+ * conditional spread stood between the outcome and what it means, and the two
+ * outcomes that serve the cache each had to remember to say `cached: true`.
+ */
+const ORIGIN = {
+  /** Every day of the window was already cached; the network was not touched. */
+  cache: { cached: true, source: 'Open-Meteo' },
+  network: { cached: false, source: 'Open-Meteo' },
+  /** The fetch failed, so whatever was cached is served instead. */
+  stale: { cached: true, stale: true, source: 'Open-Meteo (cached)' },
+} as const;
+
+type Origin = (typeof ORIGIN)[keyof typeof ORIGIN];
 
 /** The one in-flight normals download, shared by concurrent requests. */
 let normalsLoading: Promise<NormalRow[]> | null = null;
@@ -231,16 +237,15 @@ app.get('/api/compare', async (req, res) => {
   const byMd = new Map(normals.map(n => [n.md, n]));
   const normalRows = eachDay(from, to).flatMap(date => {
     const n = byMd.get(mdOf(date));
-    return n ? [publicRow(date, f => n[f])] : [];
+    return n ? [fieldRow('date', date, f => n[f])] : [];
   });
 
-  // Every reply pairs my rows with the public ones over the same window.
-  const reply = (pub: PublicRow[], opts: { cached: boolean; stale?: boolean }) =>
+  // Every reply pairs my rows with the public ones over the same window, and
+  // says where the public side came from (see ORIGIN).
+  const reply = (pub: PublicRow[], origin: Origin) =>
     res.json({
       location: BAAR.label,
-      source: opts.stale ? 'Open-Meteo (cached)' : 'Open-Meteo',
-      cached: opts.cached,
-      ...(opts.stale ? { stale: true } : {}),
+      ...origin,
       mine: queryRange(from, to),
       public: pub,
       normals: normalRows,
@@ -255,16 +260,16 @@ app.get('/api/compare', async (req, res) => {
   // The cache holds at most one row per day in the window, so counting the rows
   // says whether any day is missing — no need to walk the calendar for it.
   const needsFetch = to >= today || cached.length < dayCount(from, to);
-  if (!needsFetch) return reply(cached, { cached: true });
+  if (!needsFetch) return reply(cached, ORIGIN.cache);
 
   try {
     const fetched = await fetchOpenMeteo(from, to);
     // Persist only the stable (past) days; leave volatile forecasts uncached.
     upsertPublic(BAAR.label, fetched.filter(r => r.date < today));
-    reply(fetched, { cached: false });
+    reply(fetched, ORIGIN.network);
   } catch (err) {
     // Offline / rate-limited: serve whatever we have cached rather than failing.
-    if (cached.length) return reply(cached, { cached: true, stale: true });
+    if (cached.length) return reply(cached, ORIGIN.stale);
     res.status(502).json({ error: String(err) });
   }
 });

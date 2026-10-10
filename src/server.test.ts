@@ -4,7 +4,7 @@ import { AddressInfo } from 'net';
 import { Server } from 'http';
 import { insertRows, row } from './test/helpers';
 import { app } from './server';
-import { PUBLIC_FIELDS, upsertNormals, upsertPublic } from './db';
+import { fieldRow, upsertNormals, upsertPublic } from './db';
 import { MD_AXIS } from './normals';
 
 let server: Server;
@@ -92,8 +92,7 @@ test('compare serves cached public data and the long-term normals, offline', asy
   // Past days fully cached, and a complete normals table: no network needed.
   upsertPublic('Baar, CH', ['2020-03-01', '2020-03-02'].map(date =>
     ({ date, temp_high: 14, temp_low: 3, wind_high: 20, precip: 0 })));
-  upsertNormals('Baar, CH', MD_AXIS.map(md =>
-    ({ md, ...Object.fromEntries(PUBLIC_FIELDS.map(f => [f, md === '03-01' ? 7 : 1])) } as any)));
+  upsertNormals('Baar, CH', MD_AXIS.map(md => fieldRow('md', md, () => (md === '03-01' ? 7 : 1))));
 
   const { status, body } = await get('/api/compare?from=2020-03-01&to=2020-03-02');
   assert.equal(status, 200);

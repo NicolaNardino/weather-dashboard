@@ -39,6 +39,30 @@ export type PublicField = (typeof PUBLIC_FIELDS)[number];
 /** A cached public-service day: the date, and one nullable number per field. */
 export type PublicRow = { date: string } & Record<PublicField, number | null>;
 
+/**
+ * A row of one reading per public field, under the key that identifies it — a
+ * `date` for a fetched or cached day (`PublicRow`), an `md` for a long-term
+ * normal (`NormalRow`). Those two types differ only in that key, and every
+ * producer of either has to build the same four-field body beside it.
+ *
+ * Four places did, in three spellings: the two in `server.ts` shared a
+ * `publicRow` helper that spelled out `Object.fromEntries` over PUBLIC_FIELDS
+ * with a cast behind it (`fromEntries` types its result as a plain
+ * `Record<string, …>` however it is written), `normals.ts` cast an empty object
+ * to the row type and filled it field by field, and the route test built one
+ * more with `as any`. Each asserts again which fields make up a row, so a new
+ * public measure reached some of them and not others.
+ */
+export const fieldRow = <K extends 'date' | 'md'>(
+  key: K,
+  id: string,
+  read: (field: PublicField) => number | null,
+): Record<K, string> & Record<PublicField, number | null> =>
+  ({
+    [key]: id,
+    ...Object.fromEntries(PUBLIC_FIELDS.map(f => [f, read(f)])),
+  }) as Record<K, string> & Record<PublicField, number | null>;
+
 let _db: DatabaseSync | null = null;
 
 function getDb(): DatabaseSync {
