@@ -1,5 +1,5 @@
 import { eachDay, mdOf } from './dates';
-import { PUBLIC_FIELDS, PublicField, PublicRow, round } from './db';
+import { fieldRow, PUBLIC_FIELDS, PublicField, PublicRow, round } from './db';
 
 /**
  * Long-term daily normals: for each calendar day (`MM-DD`), the mean of every
@@ -64,25 +64,24 @@ export function computeNormals(rows: PublicRow[], halfWindow = 7): NormalRow[] {
 
   // Pass 1: every year's reading for a calendar day, collected into that day's
   // slot, then averaged — one figure per day per measure, or null for a day the
-  // archive has nothing for.
-  const daily = PUBLIC_FIELDS.map(f => {
+  // archive has nothing for. Keyed by measure NAME rather than by position in
+  // PUBLIC_FIELDS, so pass 2 reads a series by the same name it is asked for.
+  const daily = {} as Record<PublicField, (number | null)[]>;
+  for (const f of PUBLIC_FIELDS) {
     const samples: (number | null)[][] = MD_AXIS.map(() => []);
     for (const r of rows) {
       const i = slot.get(mdOf(r.date));
       if (i !== undefined) samples[i].push(r[f]);
     }
-    return samples.map(meanOf);
-  });
+    daily[f] = samples.map(meanOf);
+  }
 
   // Pass 2: each day's figure smoothed over the ±halfWindow days around it,
   // wrapping at the year end.
   const offsets = Array.from({ length: halfWindow * 2 + 1 }, (_, k) => k - halfWindow);
-  return MD_AXIS.map((md, i) => {
-    const row = { md } as NormalRow;
-    PUBLIC_FIELDS.forEach((f, fi) => {
-      const smoothed = meanOf(offsets.map(k => daily[fi][(i + k + len) % len]));
-      row[f] = smoothed == null ? null : round(smoothed);
-    });
-    return row;
-  });
+  return MD_AXIS.map((md, i) =>
+    fieldRow('md', md, f => {
+      const smoothed = meanOf(offsets.map(k => daily[f][(i + k + len) % len]));
+      return smoothed == null ? null : round(smoothed);
+    }));
 }
