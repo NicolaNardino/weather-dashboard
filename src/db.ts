@@ -63,6 +63,39 @@ export const fieldRow = <K extends 'date' | 'md'>(
     ...Object.fromEntries(PUBLIC_FIELDS.map(f => [f, read(f)])),
   }) as Record<K, string> & Record<PublicField, number | null>;
 
+/** The column a cache keys a location's rows by. */
+type CacheKey = 'date' | 'md';
+
+/**
+ * A row of one of the caches below, under the key that identifies it — the
+ * shape `fieldRow` builds, and the shape a cache stores and reads back.
+ */
+type CachedRow<K extends CacheKey> = Record<K, string> & Record<PublicField, number | null>;
+
+/** One cache's spec, as the two helpers further down take it. */
+type Cache<K extends CacheKey> = { table: string; key: K; stamped: boolean };
+
+/**
+ * The two per-location caches of public-service readings (Open-Meteo): the days
+ * fetched for the Compare view, and the long-term daily normals it sets them
+ * against — the latter computed once from a 30-year archive download (see
+ * normals.ts), so the reference line costs one fetch ever rather than one per
+ * view. Both are served without re-hitting the network, so the view works
+ * offline.
+ *
+ * They are the same table in all but the column they key a location's rows by
+ * and the fetch stamp only the fetched days carry, yet the table, its SELECT
+ * and its upsert were each spelled out twice over — six near-identical
+ * statements that a new public measure had to reach all of. `fieldRow` above
+ * already names a row's body once; this names the table holding it once.
+ */
+const PUBLIC_CACHE = {
+  /** Fetched daily rows, keyed by `YYYY-MM-DD` and stamped with the fetch time. */
+  weather: { table: 'public_weather', key: 'date', stamped: true },
+  /** Long-term normals, keyed by calendar day (`MM-DD`); nothing to date. */
+  normals: { table: 'public_normals', key: 'md', stamped: false },
+} as const satisfies Record<string, Cache<CacheKey>>;
+
 let _db: DatabaseSync | null = null;
 
 function getDb(): DatabaseSync {
@@ -82,29 +115,17 @@ function getDb(): DatabaseSync {
         value TEXT
       )
     `);
-    // Local cache of daily data fetched from the public weather service
-    // (Open-Meteo), keyed per location + date so the Compare view can be
-    // served without re-hitting the network (and works offline).
-    _db.exec(`
-      CREATE TABLE IF NOT EXISTS public_weather (
-        location   TEXT NOT NULL,
-        date       TEXT NOT NULL,
-        ${PUBLIC_FIELDS.map(f => `${f} REAL`).join(', ')},
-        fetched_at TEXT,
-        PRIMARY KEY (location, date)
-      )
-    `);
-    // Long-term daily normals per location, keyed by calendar day (MM-DD).
-    // Computed once from a 30-year archive download (see normals.ts), so the
-    // Compare view's reference line costs one fetch ever, not one per view.
-    _db.exec(`
-      CREATE TABLE IF NOT EXISTS public_normals (
-        location TEXT NOT NULL,
-        md       TEXT NOT NULL,
-        ${PUBLIC_FIELDS.map(f => `${f} REAL`).join(', ')},
-        PRIMARY KEY (location, md)
-      )
-    `);
+    // Both public-service caches (see PUBLIC_CACHE): location + its key column,
+    // one column per measure, and the fetch stamp where the cache carries one.
+    for (const c of Object.values(PUBLIC_CACHE)) {
+      _db.exec(`CREATE TABLE IF NOT EXISTS ${c.table} (${[
+        'location TEXT NOT NULL',
+        `${c.key} TEXT NOT NULL`,
+        ...PUBLIC_FIELDS.map(f => `${f} REAL`),
+        ...(c.stamped ? ['fetched_at TEXT'] : []),
+        `PRIMARY KEY (location, ${c.key})`,
+      ].join(', ')})`);
+    }
   }
   return _db;
 }
@@ -194,35 +215,45 @@ export function queryYears(): number[] {
 
 // --- Public weather service cache (Open-Meteo) ---
 
-export function queryPublicRange(location: string, from: string, to: string): PublicRow[] {
-  return all<PublicRow>(
-    `SELECT date, ${PUBLIC_FIELDS.join(', ')}
-       FROM public_weather
-      WHERE location = ? AND date >= ? AND date <= ?
-      ORDER BY date`,
-    location, from, to,
+/**
+ * A location's cached rows, in key order — narrowed to an inclusive key range
+ * where one is given, which is the only way the two readers differ: the fetch
+ * cache is read for the window being compared, the normals whole.
+ */
+const cacheRows = <K extends CacheKey>(
+  c: Cache<K>, location: string, range?: Window,
+): CachedRow<K>[] =>
+  all<CachedRow<K>>(
+    `SELECT ${c.key}, ${PUBLIC_FIELDS.join(', ')}
+       FROM ${c.table}
+      WHERE location = ?${range ? ` AND ${c.key} >= ? AND ${c.key} <= ?` : ''}
+      ORDER BY ${c.key}`,
+    ...(range ? [location, range.from, range.to] : [location]),
   );
-}
 
-export function upsertPublic(location: string, rows: PublicRow[]): void {
-  const stmt = upsertStmt('public_weather', ['location', 'date', ...PUBLIC_FIELDS, 'fetched_at']);
+/** Store a location's rows, replacing any it already holds for the same keys. */
+const writeCache = <K extends CacheKey>(
+  c: Cache<K>, location: string, rows: readonly CachedRow<K>[],
+): void => {
+  const stamp = c.stamped ? ['fetched_at'] : [];
+  const stmt = upsertStmt(c.table, ['location', c.key, ...PUBLIC_FIELDS, ...stamp]);
   const now = new Date().toISOString();
   for (const r of rows) {
-    stmt.run(location, r.date, ...PUBLIC_FIELDS.map(f => r[f]), now);
+    stmt.run(location, r[c.key], ...PUBLIC_FIELDS.map(f => r[f]), ...stamp.map(() => now));
   }
-}
+};
 
-export function queryNormals(location: string): NormalRow[] {
-  return all<NormalRow>(
-    `SELECT md, ${PUBLIC_FIELDS.join(', ')} FROM public_normals WHERE location = ? ORDER BY md`,
-    location,
-  );
-}
+export const queryPublicRange = (location: string, from: string, to: string): PublicRow[] =>
+  cacheRows(PUBLIC_CACHE.weather, location, { from, to });
 
-export function upsertNormals(location: string, rows: NormalRow[]): void {
-  const stmt = upsertStmt('public_normals', ['location', 'md', ...PUBLIC_FIELDS]);
-  for (const r of rows) stmt.run(location, r.md, ...PUBLIC_FIELDS.map(f => r[f]));
-}
+export const upsertPublic = (location: string, rows: PublicRow[]): void =>
+  writeCache(PUBLIC_CACHE.weather, location, rows);
+
+export const queryNormals = (location: string): NormalRow[] =>
+  cacheRows(PUBLIC_CACHE.normals, location);
+
+export const upsertNormals = (location: string, rows: NormalRow[]): void =>
+  writeCache(PUBLIC_CACHE.normals, location, rows);
 
 /**
  * Round to `dp` decimal places. The one arithmetic rule the three places that
