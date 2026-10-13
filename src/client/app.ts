@@ -55,17 +55,23 @@ type SharedKey = Measure & keyof PublicRow;
  */
 const CHROME = { legend: '#aaa', tick: '#888', grid: '#333' } as const;
 
+/**
+ * An axis as every chart here draws one: chrome-grey tick labels at a fixed
+ * size over chrome-grey grid lines. Both axes were written out with that body
+ * each, differing only in the tilt the x axis allows its labels — so the tick
+ * colour, the tick font and the grid colour were stated twice over, and only
+ * one of the two would have followed a change to any of them.
+ */
+const axis = (ticks: object = {}) => ({
+  ticks: { color: CHROME.tick, font: { size: 10 }, ...ticks },
+  grid: { color: CHROME.grid },
+});
+
 const CHART_DEFAULTS = {
   responsive: true,
   animation: false,
   plugins: { legend: { labels: { color: CHROME.legend, boxWidth: 12, font: { size: 11 } } } },
-  scales: {
-    x: {
-      ticks: { color: CHROME.tick, maxRotation: 45, font: { size: 10 } },
-      grid: { color: CHROME.grid },
-    },
-    y: { ticks: { color: CHROME.tick, font: { size: 10 } }, grid: { color: CHROME.grid } },
-  },
+  scales: { x: axis({ maxRotation: 45 }), y: axis() },
 };
 
 // Every chart on the page, keyed by its canvas id (dashboard `chart-*` and
@@ -450,7 +456,7 @@ const isoDay = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
 
 /**
  * The `YYYY-MM-DD` day after `iso`, in UTC — what makes two dates consecutive,
- * and the single step `daysWhile` below walks a run of days with.
+ * and the single step `datesIn` below walks a calendar unit's days with.
  *
  * It was one day's worth of a general `dayPlus(iso, days)`, because the two
  * callers stepped by different distances: the coverage runs by a day, and the
@@ -460,19 +466,25 @@ const isoDay = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
 const nextDay = (iso: string): string => isoDay(utcMs(iso) + MS_PER_DAY);
 
 /**
- * The run of days from `from` onwards, for as long as `inRange` holds.
+ * Every day of the calendar unit a key names — a `YYYY-MM` month, or a `YYYY`
+ * year. The key IS the prefix its days share, so the walk opens on the first of
+ * them and runs for as long as a day still carries it.
  *
- * Both lists of calendar slots on this page are that walk, and each counted
- * its own length off instead: the heatmap's month row from
- * `new Date(y, mo, 0).getDate()` — the one piece of calendar arithmetic here
- * done in local time — and the year-to-date axis from a bare 366, which
- * re-derives that a leap year is that long and that its days can be counted
- * off 1 January. Asking where the run ends keeps that knowledge in the
- * `monthOf` / `yearOf` readers which already answer it.
+ * Both lists of calendar slots on this page are that walk, and each supplied
+ * its own first day and its own test for where the run ends: the heatmap's
+ * month row bolted `-01` onto the key it holds and compared `monthOf` back
+ * against it, the year-to-date axis opened on a literal '2024-01-01' and
+ * compared `yearOf` against a second copy of that year. Before either, both
+ * counted their own length off instead — the month row from
+ * `new Date(y, mo, 0).getDate()`, the one piece of calendar arithmetic here
+ * done in local time, and the axis from a bare 366, which re-derives that a
+ * leap year is that long.
  */
-function daysWhile(from: string, inRange: (day: string) => boolean): string[] {
+function datesIn(key: string): string[] {
   const days: string[] = [];
-  for (let day = from; inRange(day); day = nextDay(day)) days.push(day);
+  for (let day = `${key}-01-01`.slice(0, 10); day.startsWith(key); day = nextDay(day)) {
+    days.push(day);
+  }
   return days;
 }
 
@@ -1039,6 +1051,14 @@ const statText = (prefix: string, key: string, value: number | string): string =
 const prefixOf = (field: string): string => field.split('_')[0];
 
 /**
+ * A measure's name as an id fragment: `temp_high` → `temp-high`. Both views
+ * that name a canvas after the measure it plots made the same swap, and each
+ * spelled it out — one as this replace, the other by writing the dashed form
+ * out per entry as a literal.
+ */
+const dashed = (field: string): string => field.replace(/_/g, '-');
+
+/**
  * Where one stat's value is written. `renderStatCards` puts this id on the
  * element and `renderStats` finds it again by the same name, so the template
  * has to agree across the two — it was spelled out three times (the headline,
@@ -1422,14 +1442,6 @@ function calScale(m: CalMetric, values: number[]) {
 }
 
 /**
- * Every stored day of a `YYYY-MM` month, in order — a calendar row's slots.
- * The heatmap had the month's length and each slot's own date as two separate
- * derivations from the one key it holds (see `daysWhile`), the second bolting
- * a hand-padded day number back onto that key.
- */
-const monthDates = (ym: string): string[] => daysWhile(`${ym}-01`, d => monthOf(d) === ym);
-
-/**
  * `missing` is the period's coverage gaps: those days are dashed. A day with no
  * row that isn't in it lies outside the recorded span (before the station
  * started, or not yet imported) and is left blank, so it doesn't read as a gap.
@@ -1455,7 +1467,8 @@ function renderCalendar(rows: WeatherRow[], missing: string[]): void {
   const head = `${blank}${MONTH_DAYS.map(d => `<div class="cal-head">${d}</div>`).join('')}`;
   const body = months.map(ym => {
     const [y, mo] = ym.split('-').map(Number);
-    const dates = monthDates(ym);
+    // A calendar row's slots: every stored day of the month it is (see `datesIn`).
+    const dates = datesIn(ym);
     const cells = MONTH_DAYS.map(d => {
       // A day past the end of a short month has no date to ask about.
       const date = dates[d - 1];
@@ -1549,7 +1562,7 @@ interface CompareSpec extends ChartSpecBase {
 
 /** A Compare chart's canvas id, named after the measure it plots — the four
     entries below each restated theirs as a literal alongside that measure. */
-const cmpId = (key: SharedKey) => `cmp-${key.replace(/_/g, '-')}`;
+const cmpId = (key: SharedKey) => `cmp-${dashed(key)}`;
 
 const COMPARE_META: CompareSpec[] = [
   { key: 'temp_high', series: 'High', title: 'Temperature High', row: 'Temp High' },
@@ -1897,16 +1910,32 @@ interface YoyMetric extends ChartSpecBase {
   label: string;
   get: (r: WeatherRow) => number;
 }
+/**
+ * A metric that plots a stored measure: its canvas, the stat card its unit
+ * comes from and its accessor all follow from that measure's own name — the
+ * same move COMPARE_META's entries already make, naming their measure once and
+ * letting `cmpId` and `prefixOf` do the rest.
+ *
+ * Six of the seven entries below said the same field three times over: as a
+ * literal inside the canvas id, as the `prefix` that had to agree with it, and
+ * again in the accessor. A metric left plotting one measure under another's
+ * unit was a typo away, and nothing would have said so.
+ */
+const yoyField = (field: Measure, label: string, rest: Partial<YoyMetric> = {}): YoyMetric => ({
+  id: `yoy-${dashed(field)}`, prefix: prefixOf(field), label, get: r => r[field], ...rest,
+});
+
 const YOY_METRICS: YoyMetric[] = [
-  { id: 'yoy-temp-avg',  prefix: 'temp',   label: 'Temp Avg',      get: r => r.temp_avg },
-  { id: 'yoy-temp-high', prefix: 'temp',   label: 'Temp High',     get: r => r.temp_high },
-  { id: 'yoy-temp-low',  prefix: 'temp',   label: 'Temp Low',      get: r => r.temp_low },
-  { id: 'yoy-hum-avg',   prefix: 'hum',    label: 'Humidity Avg',  get: r => r.hum_avg },
-  { id: 'yoy-wind-high', prefix: 'wind',   label: 'Wind Max',      get: r => r.wind_high },
-  { id: 'yoy-pres-avg',  prefix: 'pres',   label: 'Pressure Avg',
+  yoyField('temp_avg', 'Temp Avg'),
+  yoyField('temp_high', 'Temp High'),
+  yoyField('temp_low', 'Temp Low'),
+  yoyField('hum_avg', 'Humidity Avg'),
+  yoyField('wind_high', 'Wind Max'),
+  // The one metric with no column behind it: the day's mid-pressure, which has
+  // no stored field to name the canvas or find the unit from.
+  { id: 'yoy-pres-avg', prefix: 'pres', label: 'Pressure Avg',
     get: r => (r.pres_high + r.pres_low) / 2 },
-  { id: 'yoy-precip',    prefix: 'precip', label: 'Precipitation', type: 'bar',
-    get: r => r.precip },
+  yoyField('precip', 'Precipitation', { type: 'bar' }),
 ];
 
 // The averages table, one row per stat. A row names the stat card it reads —
@@ -2058,7 +2087,7 @@ const YTD_CHART = 'ytd-chart';
 const YTD_NOTE = 'ytd-note';
 
 /** Every MM-DD of a leap year — the shared x-axis, so 29 Feb has a slot. */
-const YTD_AXIS: string[] = daysWhile('2024-01-01', d => yearOf(d) === '2024').map(mdOf);
+const YTD_AXIS: string[] = datesIn('2024').map(mdOf);
 
 /** "Sep 27" for "09-27". */
 const mdLabel = (md: string) => `${mdMonth(md)} ${mdDayNo(md)}`;
