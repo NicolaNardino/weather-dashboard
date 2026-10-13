@@ -450,7 +450,7 @@ const isoDay = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
 
 /**
  * The `YYYY-MM-DD` day after `iso`, in UTC — what makes two dates consecutive,
- * and the single step `daysWhile` below walks a run of days with.
+ * and the single step `datesIn` below walks a calendar unit's days with.
  *
  * It was one day's worth of a general `dayPlus(iso, days)`, because the two
  * callers stepped by different distances: the coverage runs by a day, and the
@@ -460,19 +460,25 @@ const isoDay = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
 const nextDay = (iso: string): string => isoDay(utcMs(iso) + MS_PER_DAY);
 
 /**
- * The run of days from `from` onwards, for as long as `inRange` holds.
+ * Every day of the calendar unit a key names — a `YYYY-MM` month, or a `YYYY`
+ * year. The key IS the prefix its days share, so the walk opens on the first of
+ * them and runs for as long as a day still carries it.
  *
- * Both lists of calendar slots on this page are that walk, and each counted
- * its own length off instead: the heatmap's month row from
- * `new Date(y, mo, 0).getDate()` — the one piece of calendar arithmetic here
- * done in local time — and the year-to-date axis from a bare 366, which
- * re-derives that a leap year is that long and that its days can be counted
- * off 1 January. Asking where the run ends keeps that knowledge in the
- * `monthOf` / `yearOf` readers which already answer it.
+ * Both lists of calendar slots on this page are that walk, and each supplied
+ * its own first day and its own test for where the run ends: the heatmap's
+ * month row bolted `-01` onto the key it holds and compared `monthOf` back
+ * against it, the year-to-date axis opened on a literal '2024-01-01' and
+ * compared `yearOf` against a second copy of that year. Before either, both
+ * counted their own length off instead — the month row from
+ * `new Date(y, mo, 0).getDate()`, the one piece of calendar arithmetic here
+ * done in local time, and the axis from a bare 366, which re-derives that a
+ * leap year is that long.
  */
-function daysWhile(from: string, inRange: (day: string) => boolean): string[] {
+function datesIn(key: string): string[] {
   const days: string[] = [];
-  for (let day = from; inRange(day); day = nextDay(day)) days.push(day);
+  for (let day = `${key}-01-01`.slice(0, 10); day.startsWith(key); day = nextDay(day)) {
+    days.push(day);
+  }
   return days;
 }
 
@@ -1422,14 +1428,6 @@ function calScale(m: CalMetric, values: number[]) {
 }
 
 /**
- * Every stored day of a `YYYY-MM` month, in order — a calendar row's slots.
- * The heatmap had the month's length and each slot's own date as two separate
- * derivations from the one key it holds (see `daysWhile`), the second bolting
- * a hand-padded day number back onto that key.
- */
-const monthDates = (ym: string): string[] => daysWhile(`${ym}-01`, d => monthOf(d) === ym);
-
-/**
  * `missing` is the period's coverage gaps: those days are dashed. A day with no
  * row that isn't in it lies outside the recorded span (before the station
  * started, or not yet imported) and is left blank, so it doesn't read as a gap.
@@ -1455,7 +1453,8 @@ function renderCalendar(rows: WeatherRow[], missing: string[]): void {
   const head = `${blank}${MONTH_DAYS.map(d => `<div class="cal-head">${d}</div>`).join('')}`;
   const body = months.map(ym => {
     const [y, mo] = ym.split('-').map(Number);
-    const dates = monthDates(ym);
+    // A calendar row's slots: every stored day of the month it is (see `datesIn`).
+    const dates = datesIn(ym);
     const cells = MONTH_DAYS.map(d => {
       // A day past the end of a short month has no date to ask about.
       const date = dates[d - 1];
@@ -2058,7 +2057,7 @@ const YTD_CHART = 'ytd-chart';
 const YTD_NOTE = 'ytd-note';
 
 /** Every MM-DD of a leap year — the shared x-axis, so 29 Feb has a slot. */
-const YTD_AXIS: string[] = daysWhile('2024-01-01', d => yearOf(d) === '2024').map(mdOf);
+const YTD_AXIS: string[] = datesIn('2024').map(mdOf);
 
 /** "Sep 27" for "09-27". */
 const mdLabel = (md: string) => `${mdMonth(md)} ${mdDayNo(md)}`;
