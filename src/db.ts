@@ -144,17 +144,26 @@ const one = <T>(sql: string, ...params: Param[]): T | undefined =>
  * re-running an import or a fetch replaces rather than duplicates. The three
  * writers each built this SQL themselves, spelling out the same `join(', ')` /
  * one-`?`-per-column pair.
+ *
+ * Values bind by **name** (`@column`), so a caller hands over the row as an
+ * object. Positionally, every write stated its columns twice — once in the
+ * column list, once as the run of `?` after it — and then relied on a third
+ * list, the arguments, arriving in that same order, which nothing checks. Two
+ * of the three writers were bending to keep that order: the import carried its
+ * fifteen measures as an array parallel to FIELDS and read them back by index,
+ * and the cache writer appended its fetch stamp as `...stamp.map(() => now)`,
+ * an empty-or-one-element spread standing in for "iff this table carries one".
  */
 export function upsertStmt(table: string, columns: readonly string[]) {
   return getDb().prepare(
     `INSERT OR REPLACE INTO ${table} (${columns.join(', ')})
-     VALUES (${columns.map(() => '?').join(',')})`,
+     VALUES (${columns.map(c => `@${c}`).join(', ')})`,
   );
 }
 
 // Small key/value store for app metadata (e.g. last import timestamp).
 export function setMeta(key: string, value: string): void {
-  upsertStmt('meta', ['key', 'value']).run(key, value);
+  upsertStmt('meta', ['key', 'value']).run({ key, value });
 }
 
 export function getMeta(key: string): string | undefined {
@@ -235,12 +244,13 @@ const cacheRows = <K extends CacheKey>(
 const writeCache = <K extends CacheKey>(
   c: Cache<K>, location: string, rows: readonly CachedRow<K>[],
 ): void => {
-  const stamp = c.stamped ? ['fetched_at'] : [];
-  const stmt = upsertStmt(c.table, ['location', c.key, ...PUBLIC_FIELDS, ...stamp]);
-  const now = new Date().toISOString();
-  for (const r of rows) {
-    stmt.run(location, r[c.key], ...PUBLIC_FIELDS.map(f => r[f]), ...stamp.map(() => now));
-  }
+  // The fetch stamp only the fetched-days cache carries, named once: it is both
+  // a column of that table and a field of every row written to it.
+  const stamp = c.stamped ? { fetched_at: new Date().toISOString() } : {};
+  const stmt = upsertStmt(c.table, ['location', c.key, ...PUBLIC_FIELDS, ...Object.keys(stamp)]);
+  // A cached row is exactly its key column plus one per public field, so it is
+  // the written row already — only the location and the stamp are added.
+  for (const r of rows) stmt.run({ location, ...r, ...stamp });
 };
 
 export const queryPublicRange = (location: string, from: string, to: string): PublicRow[] =>

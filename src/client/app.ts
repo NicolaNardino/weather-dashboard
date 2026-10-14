@@ -250,6 +250,32 @@ function series(
 }
 
 /**
+ * A reader over `items` indexed by the slot each of them fills: hand it an axis
+ * and what to read off an item, and it answers with one value per slot — null
+ * where no item fills that slot.
+ *
+ * Every overlaid series on this page is that walk. Compare reads each side on
+ * my own dates, Across Years reads each year on the period's slots, and the
+ * year-to-date curve reads each year on a whole leap year's days; each built
+ * its own index and walked the axis itself, in three spellings of the missing
+ * slot (`?.[key] ?? null`, a ternary on the looked-up row, and `?? null` on the
+ * value). Nothing said they were the same walk, and the year-over-year mean
+ * then asked its own slots a second way — straight off the indexes, rather than
+ * off the values it was the mean of.
+ *
+ * The index is taken once and the axis walked per measure, because that is how
+ * every caller reads: several measures off the one set of rows.
+ */
+function onAxis<K, T>(items: readonly T[], slotOf: (item: T) => K) {
+  const by = new Map(items.map(item => [slotOf(item), item]));
+  return <V>(axis: readonly K[], read: (item: T) => V): (V | null)[] =>
+    axis.map(slot => {
+      const item = by.get(slot);
+      return item === undefined ? null : read(item);
+    });
+}
+
+/**
  * The last element of a list — the newest date, the latest year, the most
  * recent row. Seven call sites each spelled out the same `xs[xs.length - 1]`
  * index arithmetic, which reads as a bounds calculation rather than as the one
@@ -1755,11 +1781,12 @@ async function loadCompare(): Promise<void> {
   if (!data) return;
 
   // Both public series are read off MY dates, so every side shares one x-axis
-  // and a date the service has no row for contributes a gap. Each of them
-  // spelled that lookup out itself.
-  const alignedTo = (by: Map<string, PublicRow>) => (key: SharedKey) =>
-    lastRows.map(r => by.get(r.date)?.[key] ?? null);
-  const normals = new Map<string, PublicRow>(data.normals.map(n => [n.date, n]));
+  // and a date the service has no row for contributes a gap.
+  const myDates = lastRows.map(r => r.date);
+  const alignedTo = (rows: readonly PublicRow[]) => {
+    const at = onAxis(rows, r => r.date);
+    return (key: SharedKey) => at(myDates, r => r[key]);
+  };
 
   // The long-term normal is a third side when the server could supply it — it
   // can't on a first use while offline, and the comparison stands without. It is
@@ -1769,20 +1796,22 @@ async function loadCompare(): Promise<void> {
     { name: 'Me', head: 'My avg', color: HUE.sky, values: key => lastRows.map(r => r[key]) },
     {
       name: 'Baar', head: 'Baar avg', color: HUE.orange, extra: { borderDash: [5, 3] },
-      values: alignedTo(new Map<string, PublicRow>(data.public.map(p => [p.date, p]))),
+      values: alignedTo(data.public),
     },
-    ...(normals.size
+    ...(data.normals.length
       ? [{
           name: 'Normal', head: 'Normal', color: HUE.gray,
           extra: { borderDash: [2, 3], pointRadius: 0 },
-          values: alignedTo(normals),
+          values: alignedTo(data.normals),
         }]
       : []),
   ];
 
   el('cmp-range').textContent =
     range +
-    (normals.size ? ` · Normal: Baar ${data.normals_label}` : ' · Long-term normal unavailable');
+    (data.normals.length
+      ? ` · Normal: Baar ${data.normals_label}`
+      : ' · Long-term normal unavailable');
 
   // Lines name their measure ("Me · High"); the bar chart has only one.
   drawCharts(COMPARE_VIEW, labels(lastRows), (m, type) =>
@@ -2013,27 +2042,23 @@ async function loadYoy(): Promise<void> {
 
   const spec = YOY_UNITS[data.unit];
   const { positions, labels: xlabels } = spec.axis(data.label);
-  // Per year: within-period slot → that day's row, so each x-slot can pull each
-  // year's value (or null where a year is missing that day).
-  const byPos = data.years.map(yb => new Map(yb.rows.map(row => [spec.pos(row), row])));
+  // Each year read on the period's own slots, so the same slot lines up across
+  // years and a year missing that day contributes a gap.
+  const byYear = data.years.map(yb => onAxis(yb.rows, spec.pos));
 
   drawCharts(YOY_VIEW, xlabels, (metric, type) => {
+    const plotted = byYear.map(at => at(positions, metric.get));
     const perYear = data.years.map((yb, i) =>
-      series(
-        type,
-        String(yb.year),
-        positions.map(p => { const row = byPos[i].get(p); return row ? metric.get(row) : null; }),
-        yearColor(yb.year),
-      ));
+      series(type, String(yb.year), plotted[i], yearColor(yb.year)));
     if (data.years.length < 2) return perYear;
     // The mean of every year that recorded the slot — the baseline a single
-    // year reads as warm, wet or windy against. Per slot, so a partial year
-    // weighs in only on the days it has; and only where at least two years
-    // did, since the "mean" of one year is just that year's line again. Always
-    // a dashed line, even over the precipitation bars, so it reads as a
-    // reference rather than another year.
-    const meanLine = positions.map(p => {
-      const vals = byPos.flatMap(m => { const row = m.get(p); return row ? [metric.get(row)] : []; });
+    // year reads as warm, wet or windy against. Taken over the very values
+    // plotted above, so a partial year weighs in only on the days it has; and
+    // only where at least two years did, since the "mean" of one year is just
+    // that year's line again. Always a dashed line, even over the
+    // precipitation bars, so it reads as a reference rather than another year.
+    const meanLine = positions.map((_, slot) => {
+      const vals = plotted.map(values => values[slot]).filter((v): v is number => v != null);
       return vals.length >= 2 ? round1(mean(vals)) : null;
     });
     return [
@@ -2130,8 +2155,8 @@ async function loadYtd(): Promise<void> {
   mkChart(YTD_CHART, 'line', {
     labels: YTD_AXIS.map(mdLabel),
     datasets: years.map(y => {
-      const at = new Map(y.days.map(d => [d.md, d.total]));
-      return series('line', String(y.year), YTD_AXIS.map(md => at.get(md) ?? null), yearColor(y.year),
+      const at = onAxis(y.days, d => d.md);
+      return series('line', String(y.year), at(YTD_AXIS, d => d.total), yearColor(y.year),
         { pointRadius: 0, tension: 0, spanGaps: true, borderWidth: 2 });
     }),
   }, {

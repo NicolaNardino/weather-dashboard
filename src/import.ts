@@ -42,21 +42,25 @@ export function importFile(filePath: string): ImportResult {
     // COLUMNS rather than a literal 16, which had to agree with FIELDS by hand.
     if (cols.length < COLUMNS.length) continue;
 
-    // cols[0] is the date; the remaining 15 line up with FIELDS.
-    const values = FIELDS.map((_, i) => parseNum(cols[i + 1]));
+    // cols[0] is the date; the remaining 15 line up with FIELDS. Keyed by the
+    // measure's own name rather than held as an array parallel to FIELDS, which
+    // both the comparison below and the write then read back by index.
+    const values = Object.fromEntries(
+      FIELDS.map((f, i) => [f, parseNum(cols[i + 1])]),
+    ) as Record<Field, number>;
 
     const prev = existing.get(date);
     result.total++;
     if (!prev) {
       result.inserted++;
-    } else if (FIELDS.some((f, i) => prev[f] !== values[i])) {
+    } else if (FIELDS.some(f => prev[f] !== values[f])) {
       result.updated++;
     } else {
       result.unchanged++;
       continue; // nothing to write for an identical row
     }
 
-    insert.run(date, ...values);
+    insert.run({ date, ...values });
   }
 
   // Record when this import ran so the UI can show data freshness.

@@ -29,5 +29,7 @@ export function row(date: string, over: Partial<WeatherRow> = {}): WeatherRow {
 /** Store rows in the test database. */
 export function insertRows(rows: WeatherRow[]): void {
   const stmt = upsertStmt('weather', COLUMNS);
-  for (const r of rows) stmt.run(r.date, ...FIELDS.map(f => r[f]));
+  // Everything but the autoincrement `id`, which is not one of COLUMNS — so
+  // what is left IS the row the statement writes, named column for column.
+  for (const { id: _id, ...row } of rows) stmt.run(row);
 }
