@@ -296,10 +296,28 @@ const oneTo = (n: number): number[] => Array.from({ length: n }, (_, i) => i + 1
 
 /**
  * The arithmetic mean of a list. The heatmap's diverging scale pivots on it and
- * the Compare summary averages each column with it, and each spelled out the
- * same `reduce((a, b) => a + b, 0) / length`.
+ * both overlaid views average a column of figures with it (through `meanOf`
+ * below), and each spelled out the same `reduce((a, b) => a + b, 0) / length`.
  */
 const mean = (xs: number[]): number => xs.reduce((a, b) => a + b, 0) / xs.length;
+
+/**
+ * The mean of the values that are actually there, or null when fewer than
+ * `min` of them are.
+ *
+ * Both overlaid views average a column that may have holes in it — the Compare
+ * summary averages each side over my dates, where a date the service has no row
+ * for contributes a gap, and the Across-Years mean line averages each slot over
+ * the years that recorded it — and each spelled out its own filter-then-divide.
+ * They disagreed in both halves: one guarded the missing value with `!= null &&
+ * !Number.isNaN(…)` and the other with `!= null` alone, and "not enough to
+ * average" was `length ? … : null` against `length >= 2`, which is the one
+ * thing about the two that genuinely differs and is now what `min` says.
+ */
+const meanOf = (values: readonly (number | null)[], min = 1): number | null => {
+  const present = values.filter((v): v is number => v != null && !Number.isNaN(v));
+  return present.length >= min ? mean(present) : null;
+};
 
 /** One decimal place — how every figure the two summaries and the heatmap
     legend print is rounded, written out as `Math.round(v * 10) / 10` at each. */
@@ -1823,10 +1841,6 @@ async function loadCompare(): Promise<void> {
 }
 
 function renderCompareSummary(sides: CompareSide[]): void {
-  const avg = (vals: (number | null)[]): number | null => {
-    const v = vals.filter((x): x is number => x != null && !Number.isNaN(x));
-    return v.length ? mean(v) : null;
-  };
   // One decimal throughout — every measure compared here is a plain reading.
   const one = (n: number) => n.toFixed(1);
   // Every difference on this table is a plain subtraction between two of its
@@ -1838,7 +1852,7 @@ function renderCompareSummary(sides: CompareSide[]): void {
     columns: sides.map(s => s.head),
     metrics: COMPARE_META,
     label: m => cmpHeading(m.row, m.key),
-    values: m => sides.map(s => avg(s.values(m.key))),
+    values: m => sides.map(s => meanOf(s.values(m.key))),
     format: () => one,
     // Mine against Baar, then — when the normals loaded — each against the
     // long-term normal: the "warmer / wetter than usual" reading.
@@ -2058,8 +2072,8 @@ async function loadYoy(): Promise<void> {
     // that year's line again. Always a dashed line, even over the
     // precipitation bars, so it reads as a reference rather than another year.
     const meanLine = positions.map((_, slot) => {
-      const vals = plotted.map(values => values[slot]).filter((v): v is number => v != null);
-      return vals.length >= 2 ? round1(mean(vals)) : null;
+      const m = meanOf(plotted.map(values => values[slot]), 2);
+      return m == null ? null : round1(m);
     });
     return [
       ...perYear,
@@ -2117,6 +2131,19 @@ const YTD_AXIS: string[] = datesIn('2024').map(mdOf);
 /** "Sep 27" for "09-27". */
 const mdLabel = (md: string) => `${mdMonth(md)} ${mdDayNo(md)}`;
 
+/**
+ * The month label a slot on the shared axis carries — "Jan" where the slot
+ * opens a month, and nothing anywhere else. The chart draws a tick exactly
+ * where there is a label and a grid line exactly where there is a tick, so
+ * that is one question about a slot; the two callbacks each indexed YTD_AXIS
+ * and asked `isMonthStart` of it themselves, and the tick one indexed it twice
+ * over to then label what it had just tested.
+ */
+const monthTickAt = (slot: number): string => {
+  const md = YTD_AXIS[slot];
+  return isMonthStart(md) ? mdMonth(md) : '';
+};
+
 function renderYtdShell(): void {
   setHtml('yoy-ytd', cardWell({
     cls: 'mb-3',
@@ -2162,14 +2189,12 @@ async function loadYtd(): Promise<void> {
   }, {
     interaction: { mode: 'index', intersect: false },
     scales: {
-      // One tick per month, on its first day.
-      x: { ticks: { autoSkip: false, maxRotation: 0,
-        callback: (_v: unknown, i: number) => (isMonthStart(YTD_AXIS[i]) ? mdMonth(YTD_AXIS[i]) : '') },
-        // …and a grid line only there, rather than one per day.
-        grid: {
-          color: (c: { index: number }) =>
-            isMonthStart(YTD_AXIS[c.index]) ? CHROME.grid : 'transparent',
-        } },
+      // One tick per month, on its first day — and a grid line only there,
+      // rather than one per day.
+      x: {
+        ticks: { autoSkip: false, maxRotation: 0, callback: (_v: unknown, i: number) => monthTickAt(i) },
+        grid: { color: (c: { index: number }) => (monthTickAt(c.index) ? CHROME.grid : 'transparent') },
+      },
       y: { min: 0 },
     },
   });

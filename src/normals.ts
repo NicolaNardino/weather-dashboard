@@ -62,19 +62,23 @@ export function computeNormals(rows: PublicRow[], halfWindow = 7): NormalRow[] {
   const slot = new Map(MD_AXIS.map((md, i) => [md, i]));
   const len = MD_AXIS.length;
 
-  // Pass 1: every year's reading for a calendar day, collected into that day's
-  // slot, then averaged — one figure per day per measure, or null for a day the
-  // archive has nothing for. Keyed by measure NAME rather than by position in
-  // PUBLIC_FIELDS, so pass 2 reads a series by the same name it is asked for.
-  const daily = {} as Record<PublicField, (number | null)[]>;
-  for (const f of PUBLIC_FIELDS) {
-    const samples: (number | null)[][] = MD_AXIS.map(() => []);
-    for (const r of rows) {
-      const i = slot.get(mdOf(r.date));
-      if (i !== undefined) samples[i].push(r[f]);
-    }
-    daily[f] = samples.map(meanOf);
+  // Pass 1: every year's row for a calendar day collected into that day's slot,
+  // then averaged per measure — one figure per day per measure, or null for a
+  // day the archive has nothing for. Keyed by measure NAME rather than by
+  // position in PUBLIC_FIELDS, so pass 2 reads a series by the same name it is
+  // asked for.
+  //
+  // Which slot a row falls in is a question about its date, not about the
+  // measure being averaged, yet this bucketing sat inside the per-measure loop
+  // — so the whole 30-year run of rows was walked, and every one of them
+  // keyed, once per public measure to reach the same answer four times.
+  const perDay: PublicRow[][] = MD_AXIS.map(() => []);
+  for (const r of rows) {
+    const i = slot.get(mdOf(r.date));
+    if (i !== undefined) perDay[i].push(r);
   }
+  const daily = {} as Record<PublicField, (number | null)[]>;
+  for (const f of PUBLIC_FIELDS) daily[f] = perDay.map(day => meanOf(day.map(r => r[f])));
 
   // Pass 2: each day's figure smoothed over the ±halfWindow days around it,
   // wrapping at the year end.
