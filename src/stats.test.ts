@@ -45,6 +45,21 @@ test('climateDays uses the MeteoSwiss thresholds', () => {
   assert.deepEqual(c, { frost: 2, ice: 1, summer: 2, hot: 1 });
 });
 
+test('the hot spell is the longest run of highs at 30 °C or more', () => {
+  const s = aggregateStats([
+    row('2026-07-01', { temp_high: 31 }),
+    row('2026-07-02', { temp_high: 29.9 }),               // just below: ends the run
+    row('2026-07-03', { temp_high: 30 }),                 // exactly 30 counts
+    row('2026-07-04', { temp_high: 33 }),
+    row('2026-07-05', { temp_high: 30.5 }),
+    row('2026-07-07', { temp_high: 35 }),                 // after a missing day: a new run
+  ])!;
+  assert.deepEqual(s.spells.hot, { days: 3, from: '2026-07-03', to: '2026-07-05' });
+  // The spell and the hot-day count share one definition of a hot day.
+  assert.equal(s.climate.hot, 5);
+  assert.deepEqual(aggregateStats([row('2026-07-01')])!.spells.hot, { days: 0, from: null, to: null });
+});
+
 test('longestSpell finds the longest consecutive run', () => {
   const rows = [
     wet('2026-03-01'), wet('2026-03-02'), row('2026-03-03'),

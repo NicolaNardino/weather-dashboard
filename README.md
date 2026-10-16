@@ -24,7 +24,8 @@ server to run.
   share of the days that have data, and the dry-day count).
 - **Climate days and spells** — MeteoSwiss frost/ice days (low / high below
   0 °C) and summer/hot days (high of 25 / 30 °C or more), plus the longest run
-  of consecutive wet and dry days in the window (hover the card for the dates).
+  of consecutive wet, dry and hot (30 °C or more) days in the window — for any
+  period, including a custom Range (hover the card for the dates).
 - **Calendar heatmap** — for a Year or a multi-month Range, one cell per day
   coloured by temperature (diverging around the period's mean) or precipitation;
   click a day to open it.

@@ -25,7 +25,7 @@ interface Stats {
   precip: { total: number; max: number };
   rain: { days: number; dry: number; pct: number };
   climate: { frost: number; ice: number; summer: number; hot: number };
-  spells: { wet: Spell; dry: Spell };
+  spells: { wet: Spell; dry: Spell; hot: Spell };
 }
 
 /** A run of consecutive days; `from`/`to` are null when no day qualified. */
@@ -1044,10 +1044,15 @@ const STAT_CARDS: StatCard[] = [
     pick: s => ({ frost: s.climate.frost, ice: s.climate.ice }),
     headline: 'frost', sub: [{ key: 'ice', after: ' ice days' }], bare: ['frost', 'ice'],
     hint: () => 'Frost day: low below 0 °C\nIce day: high below 0 °C' },
+  // The hot spell is the longest run of consecutive hot days, measured like the
+  // wet and dry spells; its dates go on the hover text.
   { prefix: 'summer', title: 'Summer Days', unit: 'days',
-    pick: s => ({ summer: s.climate.summer, hot: s.climate.hot }),
-    headline: 'summer', sub: [{ key: 'hot', after: ' hot days' }], bare: ['summer', 'hot'],
-    hint: () => 'Summer day: high of 25 °C or more\nHot day: high of 30 °C or more' },
+    pick: s => ({ summer: s.climate.summer, hot: s.climate.hot, hot_spell: s.spells.hot.days }),
+    headline: 'summer',
+    sub: [{ key: 'hot', after: ' hot days · ' }, { key: 'hot_spell', before: 'longest run ' }],
+    bare: ['summer', 'hot'],
+    hint: s => 'Summer day: high of 25 °C or more\nHot day: high of 30 °C or more\n' +
+      `Longest hot spell: ${spellText(s.spells.hot)}` },
 ];
 
 /** "6 days, 2026-03-02 → 2026-03-07" — or "none" when no day qualified. */
@@ -2016,6 +2021,8 @@ const YOY_SUMMARY: { label: string; prefix: string; key: string }[] = [
   { label: 'Longest dry spell', prefix: 'spell', key: 'dry' },
   { label: 'Frost days',   prefix: 'frost',  key: 'frost' },
   { label: 'Summer days',  prefix: 'summer', key: 'summer' },
+  { label: 'Hot days',     prefix: 'summer', key: 'hot' },
+  { label: 'Longest hot spell', prefix: 'summer', key: 'hot_spell' },
 ];
 
 // The current comparison unit; its value pickers are rebuilt when it changes.
