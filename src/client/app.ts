@@ -974,18 +974,22 @@ async function load(): Promise<void> {
 
 // --- Data freshness (last import time) ---
 async function refreshStatus(): Promise<void> {
-  try {
-    const { last_import, records } =
-      await fetchJson<{ last_import: string | null; records: number }>('/api/status');
-    const stamp = el('last-import');
-    if (!last_import) {
-      stamp.textContent = 'Not yet imported';
-      return;
-    }
-    const when = new Date(last_import);
-    stamp.textContent = `Imported ${when.toLocaleString()} · ${records} records`;
-    stamp.title = `Last import: ${when.toString()}`;
-  } catch { /* non-critical */ }
+  // The same fetch-or-null `load` above and `loadInto` below already make, so
+  // the happy path reads straight down. Written as a `try` around the whole
+  // body, the catch stood between this indicator and every render below it and
+  // swallowed their faults too — a freshness line is non-critical, the page
+  // under it is not.
+  const data = await fetchJson<{ last_import: string | null; records: number }>('/api/status')
+    .catch(() => null);
+  if (!data) return;
+  const stamp = el('last-import');
+  if (!data.last_import) {
+    stamp.textContent = 'Not yet imported';
+    return;
+  }
+  const when = new Date(data.last_import);
+  stamp.textContent = `Imported ${when.toLocaleString()} · ${data.records} records`;
+  stamp.title = `Last import: ${when.toString()}`;
 }
 
 // --- Stats cards ---
@@ -1508,6 +1512,19 @@ function renderCalendar(rows: WeatherRow[], missing: string[]): void {
   // the end of a short month, and a day outside the recorded span (which is NOT
   // a gap — see above) are all the same empty grid slot, spelled out three ways.
   const blank = '<div></div>';
+  /**
+   * A day slot of the grid. Both kinds — a recorded day, coloured by its
+   * reading, and a gap in the record — are the same `cal-day` div under the
+   * same `date · …` hover text, and each spelled the whole element out, so the
+   * class and the title's date prefix were stated twice over and the separator
+   * between a date and what is said about it lived in two places.
+   *
+   * Only a recorded day carries `data-date`: that is what the delegated click
+   * handler opens in the Day period, and a day with no row has nothing to open.
+   */
+  const dayCell = (date: string, note: string, o: { cls?: string; attrs?: string } = {}): string =>
+    `<div class="cal-day${o.cls ? ` ${o.cls}` : ''}"${o.attrs ?? ''} ` +
+    `title="${date} · ${note}"></div>`;
   const head = `${blank}${MONTH_DAYS.map(d => `<div class="cal-head">${d}</div>`).join('')}`;
   const body = months.map(ym => {
     const [y, mo] = ym.split('-').map(Number);
@@ -1518,14 +1535,13 @@ function renderCalendar(rows: WeatherRow[], missing: string[]): void {
       const date = dates[d - 1];
       if (!date) return blank;
       const r = byDate.get(date);
-      if (!r) {
-        return gaps.has(date)
-          ? `<div class="cal-day cal-missing" title="${date} · missing"></div>`
-          : blank;
-      }
+      // A day with no row is a gap only where the coverage says so; outside the
+      // recorded span it is an empty slot, not a hole (see above).
+      if (!r) return gaps.has(date) ? dayCell(date, 'missing', { cls: 'cal-missing' }) : blank;
       const v = r[m.field];
-      return `<div class="cal-day" data-date="${date}" style="background:${scale.color(v)}"
-        title="${date} · ${v} ${scale.unit}"></div>`;
+      return dayCell(date, `${v} ${scale.unit}`, {
+        attrs: ` data-date="${date}" style="background:${scale.color(v)}"`,
+      });
     });
     return `<div class="cal-month">${monthName(mo)} ${String(y).slice(2)}</div>${cells.join('')}`;
   }).join('');
