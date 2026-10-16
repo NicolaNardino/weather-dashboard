@@ -313,12 +313,16 @@ export function aggregateStats(rows: WeatherRow[]) {
     spells: {
       wet: longestSpell(rows, isRainy),
       dry: longestSpell(rows, r => !isRainy(r)),
+      hot: longestSpell(rows, isHot),
     },
   };
 }
 
 /** A rain day: any precipitation recorded. Rain days and wet/dry spells agree on it. */
 const isRainy = (r: WeatherRow): boolean => r.precip > 0;
+
+/** A MeteoSwiss hot day: a high of 30 °C or more. Hot days and hot spells agree on it. */
+const isHot = (r: WeatherRow): boolean => r.temp_high >= 30;
 
 /**
  * Rain days over a set of rows: a day counts as rainy when any precipitation
@@ -345,7 +349,7 @@ export function climateDays(rows: WeatherRow[]) {
     frost:  count(r => r.temp_low < 0),
     ice:    count(r => r.temp_high < 0),
     summer: count(r => r.temp_high >= 25),
-    hot:    count(r => r.temp_high >= 30),
+    hot:    count(isHot),
   };
 }
 
