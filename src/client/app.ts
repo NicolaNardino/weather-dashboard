@@ -1387,19 +1387,26 @@ function dateRuns(dates: string[]): string {
   return runs.map(r => (r.length > 1 ? `${r[0]} → ${last(r)}` : r[0])).join(', ');
 }
 
+/**
+ * What the indicator says about a period: nothing loaded, a window the station
+ * has no records for at all, a window with gaps, or a complete one. Four
+ * outcomes, written as three nested ternaries whose conditions read inside-out
+ * — a guard per outcome says the same thing in the order they are ruled out.
+ */
+function coverageText(c: Coverage | null, missing: number): string {
+  if (!c) return 'No data for this period';
+  if (!c.expected) return 'Outside the recorded span';
+  if (missing) return `Missing ${plural(missing, 'day')} · ${c.recorded} of ${c.expected} recorded`;
+  return `All ${plural(c.expected, 'day')} recorded`;
+}
+
 function renderCoverage(c: Coverage | null): void {
   const badge = el('coverage');
   const missing = c?.missing ?? [];
   const n = missing.length;
   badge.className = `small ms-auto ${n ? 'text-warning' : 'text-muted'}`;
   badge.title = n ? `Missing: ${dateRuns(missing)}` : '';
-  badge.textContent = !c
-    ? 'No data for this period'
-    : !c.expected
-      ? 'Outside the recorded span'
-      : n
-        ? `Missing ${plural(n, 'day')} · ${c.recorded} of ${c.expected} recorded`
-        : `All ${plural(c.expected, 'day')} recorded`;
+  badge.textContent = coverageText(c, n);
 }
 
 // --- Calendar heatmap ---
