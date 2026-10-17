@@ -311,26 +311,46 @@ export function aggregateStats(rows: WeatherRow[]) {
     rain: rainDays(rows),
     climate: climateDays(rows),
     spells: {
-      wet: longestSpell(rows, isRainy),
-      dry: longestSpell(rows, r => !isRainy(r)),
-      hot: longestSpell(rows, isHot),
+      wet: longestSpell(rows, DAY_IS.rainy),
+      dry: longestSpell(rows, r => !DAY_IS.rainy(r)),
+      hot: longestSpell(rows, DAY_IS.hot),
     },
   };
 }
 
-/** A rain day: any precipitation recorded. Rain days and wet/dry spells agree on it. */
-const isRainy = (r: WeatherRow): boolean => r.precip > 0;
-
-/** A MeteoSwiss hot day: a high of 30 °C or more. Hot days and hot spells agree on it. */
-const isHot = (r: WeatherRow): boolean => r.temp_high >= 30;
+/** Something a day either is or isn't — one of the kinds below, or a negation. */
+type DayTest = (r: WeatherRow) => boolean;
 
 /**
- * Rain days over a set of rows: a day counts as rainy when any precipitation
- * was recorded. `pct` is their share of the days that have data (not of the
- * calendar days in the period), so a gap in the record doesn't read as dry.
+ * What makes a day one of the kinds this app counts: that it rained at all, and
+ * the four MeteoSwiss climate days — frost (low below 0 °C), ice (high below
+ * 0 °C, so every ice day is also a frost day), summer (high of 25 °C or more)
+ * and hot (30 °C or more, so also a summer day).
+ *
+ * Three readings ask the same questions — the climate-day counts, the rain-day
+ * share, and the longest run of consecutive such days — and only the two kinds
+ * a spell is measured over were named. The other three thresholds sat inside
+ * the one function that counted them, so where a definition lived depended on
+ * how many readings happened to want it.
+ */
+const DAY_IS = {
+  rainy: (r: WeatherRow) => r.precip > 0,
+  frost: (r: WeatherRow) => r.temp_low < 0,
+  ice: (r: WeatherRow) => r.temp_high < 0,
+  summer: (r: WeatherRow) => r.temp_high >= 25,
+  hot: (r: WeatherRow) => r.temp_high >= 30,
+} satisfies Record<string, DayTest>;
+
+/** How many of `rows` pass `test` — what both day-count readings below total. */
+const countDays = (rows: WeatherRow[], test: DayTest): number => rows.filter(test).length;
+
+/**
+ * Rain days over a set of rows. `pct` is their share of the days that have data
+ * (not of the calendar days in the period), so a gap in the record doesn't read
+ * as dry.
  */
 export function rainDays(rows: WeatherRow[]) {
-  const days = rows.filter(isRainy).length;
+  const days = countDays(rows, DAY_IS.rainy);
   return {
     days,
     dry: rows.length - days,
@@ -338,18 +358,13 @@ export function rainDays(rows: WeatherRow[]) {
   };
 }
 
-/**
- * The MeteoSwiss climate-day counts: frost days (low below 0 °C), ice days
- * (high below 0 °C — every ice day is also a frost day), summer days (high of
- * 25 °C or more) and hot days (high of 30 °C or more — also summer days).
- */
+/** The MeteoSwiss climate-day counts (see DAY_IS for the thresholds). */
 export function climateDays(rows: WeatherRow[]) {
-  const count = (test: (r: WeatherRow) => boolean) => rows.filter(test).length;
   return {
-    frost:  count(r => r.temp_low < 0),
-    ice:    count(r => r.temp_high < 0),
-    summer: count(r => r.temp_high >= 25),
-    hot:    count(isHot),
+    frost:  countDays(rows, DAY_IS.frost),
+    ice:    countDays(rows, DAY_IS.ice),
+    summer: countDays(rows, DAY_IS.summer),
+    hot:    countDays(rows, DAY_IS.hot),
   };
 }
 
@@ -361,7 +376,7 @@ export interface Spell { days: number; from: string | null; to: string | null }
  * first on a tie. A day missing from the record ends the run rather than being
  * assumed either way. `rows` must be in date order, as every query returns them.
  */
-export function longestSpell(rows: WeatherRow[], test: (r: WeatherRow) => boolean): Spell {
+export function longestSpell(rows: WeatherRow[], test: DayTest): Spell {
   let best: Spell = { days: 0, from: null, to: null };
   let start = '';
   let len = 0;
