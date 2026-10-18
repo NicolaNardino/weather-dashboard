@@ -36,44 +36,50 @@ export const PUBLIC_FIELDS = ['temp_high', 'temp_low', 'wind_high', 'precip'] as
 
 export type PublicField = (typeof PUBLIC_FIELDS)[number];
 
-/** A cached public-service day: the date, and one nullable number per field. */
-export type PublicRow = { date: string } & Record<PublicField, number | null>;
+/** The column a row of public readings is keyed by — a day, or a calendar day. */
+export type FieldKey = 'date' | 'md';
 
 /**
  * A row of one reading per public field, under the key that identifies it — a
- * `date` for a fetched or cached day (`PublicRow`), an `md` for a long-term
- * normal (`NormalRow`). Those two types differ only in that key, and every
- * producer of either has to build the same four-field body beside it.
+ * `date` for a fetched or cached day (`PublicRow` below), an `md` for a
+ * long-term normal (`NormalRow` in normals.ts). Those two differ only in that
+ * key, so this says the body once and they name the key.
  *
- * Four places did, in three spellings: the two in `server.ts` shared a
- * `publicRow` helper that spelled out `Object.fromEntries` over PUBLIC_FIELDS
- * with a cast behind it (`fromEntries` types its result as a plain
- * `Record<string, …>` however it is written), `normals.ts` cast an empty object
- * to the row type and filled it field by field, and the route test built one
- * more with `as any`. Each asserts again which fields make up a row, so a new
- * public measure reached some of them and not others.
+ * The shape was written out five times for those three names: as `PublicRow`,
+ * twice inside `fieldRow` below (its return annotation and the cast behind it,
+ * since `Object.fromEntries` types its result as a plain `Record<string, …>`
+ * however it is written), as the `CachedRow` the caches store and read back,
+ * and once more as `NormalRow`. Each asserted again which fields make up a
+ * row, which is the very thing PUBLIC_FIELDS above is the source of truth for.
  */
-export const fieldRow = <K extends 'date' | 'md'>(
+export type FieldRow<K extends FieldKey> = Record<K, string> &
+  Record<PublicField, number | null>;
+
+/** A cached public-service day: the date, and one nullable number per field. */
+export type PublicRow = FieldRow<'date'>;
+
+/**
+ * Build one: the key's value, then one reading per public field.
+ *
+ * Four places built the body themselves, in three spellings: the two in
+ * `server.ts` shared a `publicRow` helper that spelled out the
+ * `Object.fromEntries` over PUBLIC_FIELDS with a cast behind it, `normals.ts`
+ * cast an empty object to the row type and filled it field by field, and the
+ * route test built one more with `as any` — so a new public measure reached
+ * some of them and not others.
+ */
+export const fieldRow = <K extends FieldKey>(
   key: K,
   id: string,
   read: (field: PublicField) => number | null,
-): Record<K, string> & Record<PublicField, number | null> =>
+): FieldRow<K> =>
   ({
     [key]: id,
     ...Object.fromEntries(PUBLIC_FIELDS.map(f => [f, read(f)])),
-  }) as Record<K, string> & Record<PublicField, number | null>;
-
-/** The column a cache keys a location's rows by. */
-type CacheKey = 'date' | 'md';
-
-/**
- * A row of one of the caches below, under the key that identifies it — the
- * shape `fieldRow` builds, and the shape a cache stores and reads back.
- */
-type CachedRow<K extends CacheKey> = Record<K, string> & Record<PublicField, number | null>;
+  }) as FieldRow<K>;
 
 /** One cache's spec, as the two helpers further down take it. */
-type Cache<K extends CacheKey> = { table: string; key: K; stamped: boolean };
+type Cache<K extends FieldKey> = { table: string; key: K; stamped: boolean };
 
 /**
  * The two per-location caches of public-service readings (Open-Meteo): the days
@@ -94,7 +100,7 @@ const PUBLIC_CACHE = {
   weather: { table: 'public_weather', key: 'date', stamped: true },
   /** Long-term normals, keyed by calendar day (`MM-DD`); nothing to date. */
   normals: { table: 'public_normals', key: 'md', stamped: false },
-} as const satisfies Record<string, Cache<CacheKey>>;
+} as const satisfies Record<string, Cache<FieldKey>>;
 
 let _db: DatabaseSync | null = null;
 
@@ -229,10 +235,10 @@ export function queryYears(): number[] {
  * where one is given, which is the only way the two readers differ: the fetch
  * cache is read for the window being compared, the normals whole.
  */
-const cacheRows = <K extends CacheKey>(
+const cacheRows = <K extends FieldKey>(
   c: Cache<K>, location: string, range?: Window,
-): CachedRow<K>[] =>
-  all<CachedRow<K>>(
+): FieldRow<K>[] =>
+  all<FieldRow<K>>(
     `SELECT ${c.key}, ${PUBLIC_FIELDS.join(', ')}
        FROM ${c.table}
       WHERE location = ?${range ? ` AND ${c.key} >= ? AND ${c.key} <= ?` : ''}
@@ -241,8 +247,8 @@ const cacheRows = <K extends CacheKey>(
   );
 
 /** Store a location's rows, replacing any it already holds for the same keys. */
-const writeCache = <K extends CacheKey>(
-  c: Cache<K>, location: string, rows: readonly CachedRow<K>[],
+const writeCache = <K extends FieldKey>(
+  c: Cache<K>, location: string, rows: readonly FieldRow<K>[],
 ): void => {
   // The fetch stamp only the fetched-days cache carries, named once: it is both
   // a column of that table and a field of every row written to it.

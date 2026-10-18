@@ -1,13 +1,16 @@
 import { eachDay, mdOf } from './dates';
-import { fieldRow, PUBLIC_FIELDS, PublicField, PublicRow, round } from './db';
+import { FieldRow, fieldRow, PUBLIC_FIELDS, PublicField, PublicRow, round } from './db';
 
 /**
  * Long-term daily normals: for each calendar day (`MM-DD`), the mean of every
  * public measure over a 30-year reference period. The Compare view sets both my
  * readings and Baar's against them, so a period reads as "warmer / wetter than
  * usual" rather than only as "warmer than the public station".
+ *
+ * A row of readings keyed by calendar day — the same body a fetched day
+ * carries, which `FieldRow` in db.ts states once (see the note there).
  */
-export type NormalRow = { md: string } & Record<PublicField, number | null>;
+export type NormalRow = FieldRow<'md'>;
 
 /** The WMO standard reference period, from Open-Meteo's ERA5 archive. */
 export const NORMALS_PERIOD = {
