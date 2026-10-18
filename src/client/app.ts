@@ -473,16 +473,24 @@ const api = (path: string, params: Params): string =>
  * (`slice(0, 2)`, `slice(3)`) for the halves of an `MM-DD` key. Each asserts the
  * layout of a stored date again, and says where to cut rather than what is
  * being cut out.
+ *
+ * Only four cuts are left below: a day's slot in its month is the day half of
+ * its `MM-DD` key, which the two helpers beside it already read.
  */
 const yearOf = (iso: string): string => iso.slice(0, 4);
 const monthOf = (iso: string): string => iso.slice(0, 7);
 /** The `MM-DD` of a day — the within-year key the year-over-year views share. */
 const mdOf = (iso: string): string => iso.slice(5);
-/** The day of the month, as a number: "2026-04-07" → 7. */
-const dayOf = (iso: string): number => Number(iso.slice(8, 10));
 /** The two parts of an `MM-DD` key, as numbers: "09-27" → 9 and 27. */
 const mdMonthNo = (md: string): number => Number(md.slice(0, 2));
 const mdDayNo = (md: string): number => Number(md.slice(3));
+/**
+ * The day of the month, as a number: "2026-04-07" → 7. Composed from the two
+ * above rather than cut at `slice(8, 10)`: that was a fourth assertion of where
+ * a stored date's pieces sit, in a block whose whole point is that the layout
+ * is stated once — and the two helpers it is made of already know it.
+ */
+const dayOf = (iso: string): number => mdDayNo(mdOf(iso));
 
 /**
  * A stored day as its UTC-midnight instant, and an instant back as a day — the
