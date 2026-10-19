@@ -179,12 +179,6 @@ export function getMeta(key: string): string | undefined {
 /** A row of the `weather` table: the id, the date, and one number per FIELD. */
 export type WeatherRow = { id: number; date: string } & Record<Field, number>;
 
-export function queryRange(from: string, to: string): WeatherRow[] {
-  return all<WeatherRow>(
-    'SELECT * FROM weather WHERE date >= ? AND date <= ? ORDER BY date', from, to,
-  );
-}
-
 /** An inclusive window of calendar days, as stored `YYYY-MM-DD` keys. */
 export interface Window { from: string; to: string }
 
@@ -207,8 +201,17 @@ export function weekWindow(year: number, week: number): Window {
   return { from: isoDay(monday), to: isoDay(addDays(monday, 6)) };
 }
 
-/** The rows inside a window — every period query is one of these. */
-export const queryWindow = (w: Window): WeatherRow[] => queryRange(w.from, w.to);
+/**
+ * The rows inside a window, in date order — every read of stored readings is
+ * one of these. It was two: a `queryRange(from, to)` and a `queryWindow(w)`
+ * wrapping it, so the one SELECT this app makes had two exported names and the
+ * Compare route reached for the pair of days rather than naming the window it
+ * was already being asked about.
+ */
+export const queryWindow = (w: Window): WeatherRow[] =>
+  all<WeatherRow>(
+    'SELECT * FROM weather WHERE date >= ? AND date <= ? ORDER BY date', w.from, w.to,
+  );
 
 /** Every stored row. Only the import needs this — it diffs against what's there. */
 export function queryAllRows(): WeatherRow[] {
@@ -432,11 +435,18 @@ export function coverage(w: Window, rows: WeatherRow[]) {
   const bounds = one<{ first: string | null; last: string | null }>(
     'SELECT MIN(date) AS first, MAX(date) AS last FROM weather',
   );
-  const from = bounds?.first && bounds.first > w.from ? bounds.first : w.from;
-  const to = bounds?.last && bounds.last < w.to ? bounds.last : w.to;
+  // Nothing recorded at all: no day is expected, so none can be missing. Asked
+  // once here, the two clamps below are plain comparisons — each used to repeat
+  // the `bounds?.first` test to stand in for this, and the window was clipped
+  // even when there was no span to clip it to.
+  if (!bounds?.first || !bounds.last) return { expected: 0, recorded: 0, missing: [] };
+
+  // Clipped to the recorded span. Stored dates compare as strings, so the later
+  // of two starts and the earlier of two ends are plain `>`/`<`.
+  const from = bounds.first > w.from ? bounds.first : w.from;
+  const to = bounds.last < w.to ? bounds.last : w.to;
   const have = new Set(rows.map(r => r.date));
-  const days = bounds?.first ? eachDay(from, to) : [];
+  const days = eachDay(from, to);
   const missing = days.filter(d => !have.has(d));
-  const expected = days.length;
-  return { expected, recorded: expected - missing.length, missing };
+  return { expected: days.length, recorded: days.length - missing.length, missing };
 }
