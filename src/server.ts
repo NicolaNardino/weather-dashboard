@@ -4,7 +4,7 @@ import { dayCount, eachDay, isoDay, mdOf, ymd } from './dates';
 import { computeNormals, MD_AXIS, NormalRow, NORMALS_PERIOD } from './normals';
 import { DATA_FILE, describeImport, importFile } from './import';
 import {
-  queryRange, queryWindow, coverage, Window,
+  queryWindow, coverage, Window,
   dayWindow, weekWindow, monthWindow, yearWindow,
   queryAllDates, queryYears, aggregateStats, getMeta, precipYtd,
   queryPublicRange, upsertPublic, PublicRow, PublicField, fieldRow,
@@ -246,7 +246,7 @@ app.get('/api/compare', async (req, res) => {
     res.json({
       location: BAAR.label,
       ...origin,
-      mine: queryRange(from, to),
+      mine: queryWindow({ from, to }),
       public: pub,
       normals: normalRows,
       normals_label: NORMALS_PERIOD.label,
