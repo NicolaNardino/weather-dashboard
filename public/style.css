@@ -1,19 +1,42 @@
+/* The page's own colours, named once.
+   Bootstrap's dark theme supplies the page chrome; these are the surfaces and
+   greys layered on top of it. Each was a literal at the point of use, and six
+   of the eight below appeared twice over — the control fill, the bright and dim
+   greys, and both border greys — so fourteen literals said eight things, spread
+   across rules three blocks apart: the navbar rule and the table gridline are
+   the same grey, as are a control's border and a missing day's dash, and
+   nothing said so. The chart side of the app already names its palette this
+   way (CHROME and HUE in app.ts).
+
+   A colour only one rule ever uses stays a literal there: it is already named
+   by the thing it colours, which is the whole point of naming these. */
+:root {
+  --surface: #1e1e2e;        /* every card */
+  --surface-raised: #262636; /* the stat cards, a step above it */
+  --control: #2a2a3a;        /* select and checkbox fills */
+  --text-bright: #f1f3f8;    /* a stat's own figure, and a hovered day cell */
+  --text-dim: #9aa4b8;       /* a label beside a figure */
+  --text-faint: #888;        /* the heatmap's day-of-month headings */
+  --line: #333;              /* the navbar rule and the table gridlines */
+  --line-strong: #444;       /* a control's border, and a missing day's dash */
+}
+
 body { font-size: 14px; }
 
-.navbar { border-bottom: 1px solid #333; }
+.navbar { border-bottom: 1px solid var(--line); }
 
-.card { background: #1e1e2e !important; }
+.card { background: var(--surface) !important; }
 
 /* Stat cards: readable labels and values */
-#stat-cards .card { background: #262636 !important; }
-#stat-cards .text-muted { color: #9aa4b8 !important; }
-#stat-cards .fs-4 { color: #f1f3f8; }
+#stat-cards .card { background: var(--surface-raised) !important; }
+#stat-cards .text-muted { color: var(--text-dim) !important; }
+#stat-cards .fs-4 { color: var(--text-bright); }
 
 /* Chart card titles need readable contrast on the dark surface */
 .card-title.text-muted { color: #aab2c5 !important; }
 
 .table-dark { background: transparent; }
-.table-dark td, .table-dark th { border-color: #333; }
+.table-dark td, .table-dark th { border-color: var(--line); }
 
 canvas { display: block; }
 
@@ -24,8 +47,8 @@ canvas { display: block; }
    sit in. The rule also still excluded text inputs, which stopped existing when
    the date pickers became <select>s, so its `input` half matched nothing. */
 select {
-  background: #2a2a3a;
-  border: 1px solid #444;
+  background: var(--control);
+  border: 1px solid var(--line-strong);
   color: #ccc;
   padding: 2px 8px;
   border-radius: 4px;
@@ -35,7 +58,7 @@ select {
 /* "All" range checkbox — the page's one input: unchecked is dark, checked turns
    red with a visible white check mark (keep Bootstrap's check-mark image). */
 input[type="checkbox"] {
-  background-color: #2a2a3a;
+  background-color: var(--control);
   border: 1px solid #666;
 }
 input[type="checkbox"]:checked {
@@ -60,11 +83,11 @@ input[type="checkbox"]:checked {
   grid-template-columns: 3.5rem repeat(31, minmax(0, 1fr));
   gap: 2px;
 }
-.cal-head { font-size: 10px; color: #888; text-align: center; }
-.cal-month { font-size: 11px; color: #9aa4b8; align-self: center; white-space: nowrap; }
+.cal-head { font-size: 10px; color: var(--text-faint); text-align: center; }
+.cal-month { font-size: 11px; color: var(--text-dim); align-self: center; white-space: nowrap; }
 .cal-day { height: 18px; border-radius: 3px; cursor: pointer; }
-.cal-day:hover { outline: 2px solid #f1f3f8; }
-.cal-missing { background: transparent; border: 1px dashed #444; cursor: default; }
+.cal-day:hover { outline: 2px solid var(--text-bright); }
+.cal-missing { background: transparent; border: 1px dashed var(--line-strong); cursor: default; }
 .cal-missing:hover { outline: none; }
 .cal-legend { width: 240px; }
 .cal-legend-bar { height: 8px; border-radius: 4px; margin-bottom: 2px; }

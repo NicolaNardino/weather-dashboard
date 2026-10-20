@@ -303,8 +303,11 @@ export function aggregateStats(rows: WeatherRow[]) {
     low:  min(r => r[`${p}_low`]),
   });
 
+  // No day count here: every reader of these stats already holds the rows they
+  // were computed from — the dashboard has `data.rows`, and the across-years
+  // view reports `days.recorded` off the very same list — so `count` was a
+  // second copy of `rows.length` travelling over the wire, read by nobody.
   return {
-    count: rows.length,
     temp: triple('temp', r => r.temp_avg),
     humidity: triple('hum', r => r.hum_avg),
     wind: {
@@ -314,7 +317,7 @@ export function aggregateStats(rows: WeatherRow[]) {
     pressure: triple('pres', r => (r.pres_high + r.pres_low) / 2, 2),
     dew: triple('dew', r => r.dew_avg),
     precip: {
-      total: round(sum(r => r.precip), 2),
+      total: round(sum(r => r.precip)),
       max:   max(r => r.precip),
     },
     rain: rainDays(rows),
