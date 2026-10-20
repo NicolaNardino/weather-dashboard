@@ -780,12 +780,17 @@ const captioned =
  * than restating the option list and the `last(allDates)` default per site
  * (which is exactly why `weekSelect`/`monthSelect`/`daySelect` above exist).
  *
+ * The "newest" default is `poolSelect`'s own: an omitted `selected` arrives as
+ * undefined, which is what a default parameter is for. Restating it here as
+ * `= last(allDates)` was the same fallback written a second time one line above
+ * the one that already applies it.
+ *
  * It reads `allDates` itself, the way `yearSelect` and the Range period's own
  * `url` already do. Handing the pool to `controls` instead meant a parameter
  * that was only ever the very global those two read directly, so the same list
  * reached the pickers by two routes.
  */
-const dateSelect = (onChange: () => void, selected = last(allDates)) =>
+const dateSelect = (onChange: () => void, selected?: string) =>
   poolSelect(allDates, onChange, selected);
 
 /** Where the Range period opens: the last ~30 available days, a sensible window. */

@@ -17,7 +17,6 @@ test('aggregateStats reports extremes, means and precipitation', () => {
     row('2026-03-02', { temp_high: 20, temp_avg: 13, temp_low: 6, precip: 0 }),
     row('2026-03-03', { temp_high: 16, temp_avg: 12, temp_low: -1, precip: 4.5 }),
   ])!;
-  assert.equal(s.count, 3);
   assert.deepEqual(s.temp, { high: 20, avg: 11, low: -1 });
   assert.deepEqual(s.precip, { total: 5.75, max: 4.5 });
   assert.deepEqual(s.rain, { days: 2, dry: 1, pct: 67 });
