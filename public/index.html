@@ -74,6 +74,11 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
-<script src="app.js"></script>
+<!-- A module: app.ts imports the API shapes from src/shapes.d.ts (types only —
+     nothing is emitted), which makes the compiled bundle an ES module. Being
+     deferred, it runs after the Chart.js tag above has defined the global it
+     reads, and after this markup is parsed — both of which it already relied
+     on by sitting at the end of the body. -->
+<script type="module" src="app.js"></script>
 </body>
 </html>
