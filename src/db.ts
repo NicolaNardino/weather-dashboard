@@ -2,61 +2,56 @@ import { DatabaseSync } from 'node:sqlite';
 import path from 'path';
 import { addDays, eachDay, isoDay, mdOf, nextDay, ymd } from './dates';
 import type { NormalRow } from './normals';
+import type { Coverage, FieldKey, FieldList, FieldRow, PublicField, PublicFieldList, PublicRow, Spell, Stats, WeatherRow } from './shapes';
 
 // WEATHER_DB lets the tests point the app at a throwaway database.
 const DB_PATH = process.env.WEATHER_DB ?? path.join(process.cwd(), 'weather.db');
 
 /**
  * The 15 measure columns, in the order they appear in weather_data.txt after
- * the date. This is the single source of truth for them: it builds the
- * `weather` table, types `WeatherRow`, and drives the import (see import.ts) —
- * so a new column is added here alone rather than in three lists that had to
- * agree.
+ * the date. This array is what builds the `weather` table and drives the
+ * import (see import.ts); the `FieldList` tuple it is annotated with lives in
+ * `shapes.d.ts`, where the front-end can read it too.
+ *
+ * Annotated rather than `as const`, so the list and the shape the API answers
+ * with have to match exactly — a measure added to one and not the other, or
+ * put in a different position, is a compile error rather than a column that
+ * silently never gets written or read.
  */
-export const FIELDS = [
+export const FIELDS: FieldList = [
   'temp_high', 'temp_avg', 'temp_low',
   'dew_high', 'dew_avg', 'dew_low',
   'hum_high', 'hum_avg', 'hum_low',
   'wind_high', 'wind_avg', 'wind_low',
   'pres_high', 'pres_low', 'precip',
-] as const;
-
-export type Field = (typeof FIELDS)[number];
+];
 
 /** Every column of the `weather` table, in insert order. */
 export const COLUMNS = ['date', ...FIELDS];
 
 /**
  * The measures the public weather service supplies — the subset of FIELDS the
- * Compare view can line my data up against. Like FIELDS, this is the single
- * source of truth: it builds the `public_weather` cache table, types
- * `PublicRow`, and drives both its SELECT and its INSERT.
+ * Compare view can line my data up against. It builds the `public_weather`
+ * cache table and drives both its SELECT and its INSERT, and is pinned to its
+ * own tuple in `shapes.d.ts` for the same reason FIELDS is.
  */
-export const PUBLIC_FIELDS = ['temp_high', 'temp_low', 'wind_high', 'precip'] as const;
+export const PUBLIC_FIELDS: PublicFieldList = ['temp_high', 'temp_low', 'wind_high', 'precip'];
 
-export type PublicField = (typeof PUBLIC_FIELDS)[number];
-
-/** The column a row of public readings is keyed by — a day, or a calendar day. */
-export type FieldKey = 'date' | 'md';
-
-/**
- * A row of one reading per public field, under the key that identifies it — a
- * `date` for a fetched or cached day (`PublicRow` below), an `md` for a
- * long-term normal (`NormalRow` in normals.ts). Those two differ only in that
- * key, so this says the body once and they name the key.
- *
- * The shape was written out five times for those three names: as `PublicRow`,
- * twice inside `fieldRow` below (its return annotation and the cast behind it,
- * since `Object.fromEntries` types its result as a plain `Record<string, …>`
- * however it is written), as the `CachedRow` the caches store and read back,
- * and once more as `NormalRow`. Each asserted again which fields make up a
- * row, which is the very thing PUBLIC_FIELDS above is the source of truth for.
- */
-export type FieldRow<K extends FieldKey> = Record<K, string> &
-  Record<PublicField, number | null>;
-
-/** A cached public-service day: the date, and one nullable number per field. */
-export type PublicRow = FieldRow<'date'>;
+// The row shapes these columns make up are declared once in `shapes.d.ts` —
+// the server builds them, the front-end reads them — and re-exported here so
+// the rest of the server keeps importing them from the layer that produces
+// them. See the note at the top of that file.
+export type {
+  Coverage,
+  Field,
+  FieldKey,
+  FieldRow,
+  PublicField,
+  PublicRow,
+  Spell,
+  Stats,
+  WeatherRow,
+} from './shapes';
 
 /**
  * Build one: the key's value, then one reading per public field.
@@ -176,9 +171,6 @@ export function getMeta(key: string): string | undefined {
   return one<{ value: string }>('SELECT value FROM meta WHERE key = ?', key)?.value;
 }
 
-/** A row of the `weather` table: the id, the date, and one number per FIELD. */
-export type WeatherRow = { id: number; date: string } & Record<Field, number>;
-
 /** An inclusive window of calendar days, as stored `YYYY-MM-DD` keys. */
 export interface Window { from: string; to: string }
 
@@ -282,7 +274,7 @@ export const upsertNormals = (location: string, rows: NormalRow[]): void =>
  */
 export const round = (v: number, dp = 2): number => Math.round(v * 10 ** dp) / 10 ** dp;
 
-export function aggregateStats(rows: WeatherRow[]) {
+export function aggregateStats(rows: WeatherRow[]): Stats | null {
   if (!rows.length) return null;
 
   // A measure to aggregate: reads one number out of a row. (Named `Get` rather
@@ -380,9 +372,6 @@ export function climateDays(rows: WeatherRow[]) {
   };
 }
 
-/** A run of consecutive days; `from`/`to` are null when no day qualified. */
-export interface Spell { days: number; from: string | null; to: string | null }
-
 /**
  * The longest run of consecutive calendar days that all pass `test`, earliest
  * first on a tie. A day missing from the record ends the run rather than being
@@ -434,7 +423,7 @@ export function precipYtd(): { year: number; days: { md: string; total: number }
  * that haven't happened or been imported yet, don't count as missing — a Year
  * view in September isn't "missing" October to December.
  */
-export function coverage(w: Window, rows: WeatherRow[]) {
+export function coverage(w: Window, rows: WeatherRow[]): Coverage {
   const bounds = one<{ first: string | null; last: string | null }>(
     'SELECT MIN(date) AS first, MAX(date) AS last FROM weather',
   );

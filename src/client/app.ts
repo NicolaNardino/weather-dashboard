@@ -4,46 +4,19 @@
 
 declare const Chart: any;
 
-interface WeatherRow {
-  date: string;
-  temp_high: number; temp_avg: number; temp_low: number;
-  dew_high: number; dew_avg: number; dew_low: number;
-  hum_high: number; hum_avg: number; hum_low: number;
-  wind_high: number; wind_avg: number; wind_low: number;
-  pres_high: number; pres_low: number; precip: number;
-}
-
-/** Interfaces get no implicit index signature, so this is a type alias — the
-    stat cards read their group as a Record<string, number>. */
-type StatTriple = { high: number; avg: number; low: number };
-interface Stats {
-  temp: StatTriple;
-  dew: StatTriple;
-  humidity: StatTriple;
-  wind: { high: number; avg: number };
-  pressure: StatTriple;
-  precip: { total: number; max: number };
-  rain: { days: number; dry: number; pct: number };
-  climate: { frost: number; ice: number; summer: number; hot: number };
-  spells: { wet: Spell; dry: Spell; hot: Spell };
-}
-
-/** A run of consecutive days; `from`/`to` are null when no day qualified. */
-interface Spell { days: number; from: string | null; to: string | null }
-
-interface PublicRow {
-  date: string;
-  temp_high: number | null;
-  temp_low: number | null;
-  wind_high: number | null;
-  precip: number | null;
-}
-
-/** A stored measure — every column of a row but the date it is keyed by. */
-type Measure = Exclude<keyof WeatherRow, 'date'>;
+/**
+ * The shapes this page reads come from `src/shapes.d.ts` — the same
+ * declarations the server builds them against, so a measure renamed or a stat
+ * card dropped over there is a compile error here rather than an `undefined`
+ * in the browser. This file used to open with its own copies of all five.
+ *
+ * Type-only, so nothing is emitted: `public/app.js` stays the single
+ * bundler-free file it has always been (see the note in `shapes.d.ts`).
+ */
+import type { Coverage, Field, PublicRow, Spell, Stats, WeatherRow } from '../shapes';
 
 /** The measures both my rows and the public ones carry — the Compare axis. */
-type SharedKey = Measure & keyof PublicRow;
+type SharedKey = Field & keyof PublicRow;
 
 /**
  * The chart chrome: the three greys a chart's legend, its tick labels and its
@@ -1206,7 +1179,7 @@ interface ChartSpec extends ChartSpecBase {
   /** One entry per plotted series: which measure it reads, and how it looks.
       `col`/`height` come from ChartSpecBase: only the two charts that break the
       grid's default cell size give their own. */
-  series: { label: string; field: Measure; color: string; extra?: any }[];
+  series: { label: string; field: Field; color: string; extra?: any }[];
 }
 
 const CHART_META: ChartSpec[] = [
@@ -1382,7 +1355,6 @@ function renderTable(rows: WeatherRow[]): void {
 // How completely the period is recorded, beside the chart toggles. The server
 // clips the period to the span the station has records for, so only a real gap
 // counts: days before the first recording, or not yet imported, don't.
-interface Coverage { expected: number; recorded: number; missing: string[] }
 
 /**
  * Consecutive dates folded into runs: "2026-08-03 → 2026-08-06, 2026-09-01".
@@ -1428,7 +1400,7 @@ function renderCoverage(c: Coverage | null): void {
 // period, a long Range): for a day, a week or one month the charts above
 // already say it better. Clicking a day opens it in the Day period.
 interface CalMetric {
-  field: Measure;
+  field: Field;
   label: string;
   /** Diverging around the period's mean (temperatures), or sequential from zero. */
   scale: 'diverging' | 'sequential';
@@ -1453,7 +1425,7 @@ const CAL_COLORS = {
   none: '#2b2b33',
 };
 
-let calMetric: Measure = readStore<Measure>('calMetric', 'temp_avg');
+let calMetric: Field = readStore<Field>('calMetric', 'temp_avg');
 /** What the heatmap last drew, so switching the measure can redraw it. */
 let calRows: WeatherRow[] = [];
 let calMissing: string[] = [];
@@ -1588,7 +1560,7 @@ function renderCalendar(rows: WeatherRow[], missing: string[]): void {
     CAL_METRICS.map(x => ({ value: x.field, label: x.label })),
     m.field,
     function (this: HTMLSelectElement) {
-      calMetric = this.value as Measure;
+      calMetric = this.value as Field;
       writeStore('calMetric', calMetric);
       renderCalendar(calRows, calMissing);
     },
@@ -2005,7 +1977,7 @@ interface YoyMetric extends ChartSpecBase {
  * again in the accessor. A metric left plotting one measure under another's
  * unit was a typo away, and nothing would have said so.
  */
-const yoyField = (field: Measure, label: string, rest: Partial<YoyMetric> = {}): YoyMetric => ({
+const yoyField = (field: Field, label: string, rest: Partial<YoyMetric> = {}): YoyMetric => ({
   id: `yoy-${dashed(field)}`, prefix: prefixOf(field), label, get: r => r[field], ...rest,
 });
 
