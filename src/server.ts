@@ -3,6 +3,10 @@ import path from 'path';
 import { dayCount, eachDay, isoDay, mdOf, ymd } from './dates';
 import { computeNormals, MD_AXIS, NormalRow, NORMALS_PERIOD } from './normals';
 import { DATA_FILE, describeImport, importFile } from './import';
+import type {
+  AcrossYearsReply, CompareReply, ImportReply, PeriodReply,
+  PrecipYtdReply, StatusReply, YoyUnitKey,
+} from './shapes';
 import {
   queryWindow, coverage, Window,
   dayWindow, weekWindow, monthWindow, yearWindow,
@@ -160,7 +164,11 @@ function rowsRoute<T extends string | number = string>(
     const w = window(q);
     const found = queryWindow(w);
     if (opts.emptyIs404 && !found.length) return res.status(404).json({ error: 'no data' });
-    res.json({ rows: found, stats: aggregateStats(found), coverage: coverage(w, found) });
+    res.json({
+      rows: found,
+      stats: aggregateStats(found),
+      coverage: coverage(w, found),
+    } satisfies PeriodReply);
   };
 }
 
@@ -182,7 +190,7 @@ interface YoyUnit {
   window: (q: Record<string, number>, year: number) => Window;
 }
 
-const YOY_UNITS: Record<string, YoyUnit> = {
+const YOY_UNITS: Record<YoyUnitKey, YoyUnit> = {
   day: {
     needs: ['month', 'day'],
     label: q => `${monthName(q.month)} ${q.day}`,
@@ -215,7 +223,7 @@ app.get('/api/status', (_req, res) => {
   res.json({
     last_import: getMeta('last_import') ?? null,
     records: queryAllDates().length,
-  });
+  } satisfies StatusReply);
 });
 
 // GET /api/compare?from=YYYY-MM-DD&to=YYYY-MM-DD
@@ -250,7 +258,7 @@ app.get('/api/compare', async (req, res) => {
       public: pub,
       normals: normalRows,
       normals_label: NORMALS_PERIOD.label,
-    });
+    } satisfies CompareReply);
 
   const today = isoDay(new Date());
   const cached = queryPublicRange(BAAR.label, from, to);
@@ -293,8 +301,11 @@ app.get('/api/across-years', (req, res) => {
   // request and labels the reply. Echoing `req.query.unit` back instead
   // returned whatever was asked for — an array, for a repeated `?unit=` —
   // where the lookup above had already settled on one key.
-  const unit = String(req.query.unit ?? '');
-  const spec = YOY_UNITS[unit];
+  // A key only if the table holds it: the lookup is typed as possibly absent so
+  // the 400 below reads as the guard it is, rather than as a branch on a value
+  // the types say cannot happen.
+  const unit = String(req.query.unit ?? '') as YoyUnitKey;
+  const spec: YoyUnit | undefined = YOY_UNITS[unit];
   // The units the message offers come from the table that answers them, rather
   // than a hand-kept copy of its keys that a fourth unit would leave behind.
   if (!spec) {
@@ -321,14 +332,14 @@ app.get('/api/across-years', (req, res) => {
     }];
   });
 
-  res.json({ unit, label: spec.label(q), years });
+  res.json({ unit, label: spec.label(q), years } satisfies AcrossYearsReply);
 });
 
 // GET /api/precip-ytd — the running precipitation total through each year that
 // has data, one point per recorded day ({ md: 'MM-DD', total }), so the years
 // can be overlaid on a shared Jan–Dec axis.
 app.get('/api/precip-ytd', (_req, res) => {
-  res.json({ years: precipYtd() });
+  res.json({ years: precipYtd() } satisfies PrecipYtdReply);
 });
 
 /**
@@ -359,7 +370,7 @@ for (const [period, handler] of Object.entries(PERIOD_ROUTES)) {
 // POST /api/import — re-import weather_data.txt (idempotent)
 app.post('/api/import', (_req, res) => {
   try {
-    res.json({ ok: true, ...importFile(DATA_FILE) });
+    res.json({ ok: true, ...importFile(DATA_FILE) } satisfies ImportReply);
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }

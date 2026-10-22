@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import path from 'path';
 import { addDays, eachDay, isoDay, mdOf, nextDay, ymd } from './dates';
 import type { NormalRow } from './normals';
-import type { Coverage, FieldKey, FieldList, FieldRow, PublicField, PublicFieldList, PublicRow, Spell, Stats, WeatherRow } from './shapes';
+import type { Coverage, FieldKey, FieldList, FieldRow, PrecipYtdYear, PublicField, PublicFieldList, PublicRow, Spell, Stats, WeatherRow } from './shapes';
 
 // WEATHER_DB lets the tests point the app at a throwaway database.
 const DB_PATH = process.env.WEATHER_DB ?? path.join(process.cwd(), 'weather.db');
@@ -403,7 +403,7 @@ export function longestSpell(rows: WeatherRow[], test: DayTest): Spell {
  * the year-to-date rain curve. A year whose record starts mid-year accumulates
  * from its first recorded day.
  */
-export function precipYtd(): { year: number; days: { md: string; total: number }[] }[] {
+export function precipYtd(): PrecipYtdYear[] {
   return queryYears().map(year => {
     let total = 0;
     const days = queryWindow(yearWindow(year)).map(r => {

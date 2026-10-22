@@ -2,6 +2,11 @@ import fs from 'fs';
 import path from 'path';
 import { ymd } from './dates';
 import { COLUMNS, Field, FIELDS, queryAllRows, setMeta, upsertStmt } from './db';
+import type { ImportResult } from './shapes';
+
+// Re-exported from the layer that produces it, as db.ts does with the row
+// shapes — the import button reads this straight off the wire.
+export type { ImportResult } from './shapes';
 
 /** Strip units/thousands separators, keeping only what parseFloat reads. */
 function parseNum(s: string): number {
@@ -12,13 +17,6 @@ function parseNum(s: string): number {
 function parseDate(s: string): string | null {
   const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
   return m ? ymd(Number(m[3]), Number(m[1]), Number(m[2])) : null;
-}
-
-export interface ImportResult {
-  total: number;      // valid data rows found in the file
-  inserted: number;   // dates not previously in the DB
-  updated: number;    // dates that existed but whose values changed
-  unchanged: number;  // dates already present with identical values
 }
 
 export function importFile(filePath: string): ImportResult {
