@@ -98,3 +98,97 @@ export interface Coverage {
   recorded: number;
   missing: string[];
 }
+
+/**
+ * The reply each route answers with — the other half of saying the API's
+ * shapes once.
+ *
+ * The row and stat shapes above are shared, but the envelopes carrying them
+ * were still stated twice over: the server built each as a bare object literal
+ * in `res.json(…)`, and `app.ts` declared its own interface to read it back.
+ * Nothing held the two together, and they had already drifted — the page
+ * believed a period always comes with stats, when a window with no rows
+ * carries `stats: null`, and it re-spelled an import's four counters field for
+ * field beside `ImportResult`, which `import.ts` already declares.
+ *
+ * The server now says `satisfies` on each reply, so a field renamed or dropped
+ * there is a compile error here rather than an `undefined` in the browser.
+ */
+
+/** What every period route answers with; `stats` is null for an empty window. */
+export interface PeriodReply {
+  rows: WeatherRow[];
+  stats: Stats | null;
+  coverage: Coverage;
+}
+
+/**
+ * The three year-over-year comparison units. Both sides keep a table keyed by
+ * these — the server's answers the request, the page's holds that unit's
+ * pickers and axis — so this pins them the way `FieldList` pins the measures:
+ * a fourth unit added to one table and not the other is a compile error.
+ */
+export type YoyUnitKey = "day" | "week" | "month";
+
+/** One year's block of an across-years reply. */
+export interface YearBlock {
+  year: number;
+  rows: WeatherRow[];
+  stats: Stats | null;
+  /** Days behind this year's figures, against the period's calendar length. */
+  days: { recorded: number; total: number };
+}
+
+export interface AcrossYearsReply {
+  unit: YoyUnitKey;
+  label: string;
+  years: YearBlock[];
+}
+
+/** One year's running precipitation total, one point per recorded day. */
+export interface PrecipYtdYear {
+  year: number;
+  days: { md: string; total: number }[];
+}
+
+export interface PrecipYtdReply {
+  years: PrecipYtdYear[];
+}
+
+/** Data freshness: when the file was last imported, and how many rows are stored. */
+export interface StatusReply {
+  last_import: string | null;
+  records: number;
+}
+
+/** What an import did — the counters `import.ts` reports and the button shows. */
+export interface ImportResult {
+  /** Valid data rows found in the file. */
+  total: number;
+  /** Dates not previously in the DB. */
+  inserted: number;
+  /** Dates that existed but whose values changed. */
+  updated: number;
+  /** Dates already present with identical values. */
+  unchanged: number;
+}
+
+export interface ImportReply extends ImportResult {
+  ok: true;
+}
+
+/**
+ * My rows beside the public service's over the same window, plus the long-term
+ * normals and where the public side came from (see ORIGIN in server.ts).
+ */
+export interface CompareReply {
+  location: string;
+  cached: boolean;
+  /** Only set when a failed fetch fell back to the cache. */
+  stale?: boolean;
+  source: string;
+  mine: WeatherRow[];
+  public: PublicRow[];
+  normals: PublicRow[];
+  normals_label: string;
+}

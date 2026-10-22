@@ -13,7 +13,11 @@ declare const Chart: any;
  * Type-only, so nothing is emitted: `public/app.js` stays the single
  * bundler-free file it has always been (see the note in `shapes.d.ts`).
  */
-import type { Coverage, Field, PublicRow, Spell, Stats, WeatherRow } from '../shapes';
+import type {
+  AcrossYearsReply, CompareReply, Coverage, Field, ImportReply, PeriodReply,
+  PrecipYtdReply, PublicRow, Spell, Stats, StatusReply, WeatherRow, YearBlock,
+  YoyUnitKey,
+} from '../shapes';
 
 /** The measures both my rows and the public ones carry — the Compare axis. */
 type SharedKey = Field & keyof PublicRow;
@@ -922,23 +926,11 @@ async function reloadDates(): Promise<void> {
 
 // --- Load data ---
 
-/**
- * What every period route answers with — the rows in the period, the stat-card
- * figures over them, and how completely the period is recorded.
- *
- * Named, because the loader below had to declare its variable before the `try`
- * that fills it in order to use it after, and so wrote the shape out as that
- * declaration's type and then referred back to it as `typeof data`. The two
- * other things a loader on this page fetches (`Stats`, `Coverage`) are named
- * interfaces already; this is the one that holds them.
- */
-interface PeriodData { rows: WeatherRow[]; stats: Stats; coverage: Coverage }
-
 async function load(): Promise<void> {
   // The same fetch-or-null the two overlays' `loadInto` already does, so the
   // happy path reads straight down rather than out of a `try` that assigns to
   // a variable declared above it.
-  const data = await fetchJson<PeriodData>(api(period, PERIOD_STRIP.params(period)))
+  const data = await fetchJson<PeriodReply>(api(period, PERIOD_STRIP.params(period)))
     .catch(() => null);
   if (!data) {
     // A period the server has no data for (the day route 404s) — blank the
@@ -965,7 +957,7 @@ async function refreshStatus(): Promise<void> {
   // body, the catch stood between this indicator and every render below it and
   // swallowed their faults too — a freshness line is non-critical, the page
   // under it is not.
-  const data = await fetchJson<{ last_import: string | null; records: number }>('/api/status')
+  const data = await fetchJson<StatusReply>('/api/status')
     .catch(() => null);
   if (!data) return;
   const stamp = el('last-import');
@@ -1128,7 +1120,7 @@ function renderStatCards(): void {
 
 // Every key a card's group carries has a span on the card — the headline's, or
 // one of the sub-line's — so each id below is one `renderStatCards` just wrote.
-function renderStats(s: Stats | undefined): void {
+function renderStats(s: Stats | null): void {
   if (!s) return;
   for (const c of STAT_CARDS) {
     for (const [key, value] of Object.entries(c.pick(s))) {
@@ -1587,9 +1579,7 @@ importBtn.addEventListener('click', async () => {
   importBtn.textContent = '…';
   importBtn.disabled = true;
   try {
-    const j = await fetchJson<{ total: number; inserted: number; updated: number; unchanged: number }>(
-      '/api/import', { method: 'POST' },
-    );
+    const j = await fetchJson<ImportReply>('/api/import', { method: 'POST' });
     // Report what actually changed, not just the row count in the file.
     importBtn.textContent = `✓ ${j.inserted} new · ${j.updated} upd`;
     importBtn.title = `${j.total} rows processed — ${j.inserted} new, ${j.updated} updated, ${j.unchanged} unchanged`;
@@ -1803,9 +1793,7 @@ async function loadCompare(): Promise<void> {
   const range = `${from} → ${to}`;
   el('cmp-range').textContent = range;
 
-  const data = await loadInto<{
-    mine: WeatherRow[]; public: PublicRow[]; normals: PublicRow[]; normals_label: string;
-  }>(
+  const data = await loadInto<CompareReply>(
     status, api('compare', { from, to }),
     'Loading public data…', 'Could not fetch public data',
   );
@@ -1881,15 +1869,6 @@ function renderCompareSummary(sides: CompareSide[]): void {
 // gathers each year's rows for the chosen period; here each year becomes one
 // overlaid series (aligned on a shared within-period axis) plus one column in
 // the averages table.
-interface YearBlock {
-  year: number;
-  rows: WeatherRow[];
-  stats: Stats;
-  /** Days behind this year's figures, against the period's calendar length. */
-  days: { recorded: number; total: number };
-}
-interface YoyResponse { unit: YoyUnit; label: string; years: YearBlock[]; }
-
 /**
  * A year that recorded only part of the period — started mid-month, still
  * under way, or with gaps. Its averages and totals cover fewer days than a
@@ -1942,9 +1921,7 @@ const YOY_UNITS = {
     pos: r => dayOf(r.date),                             // day of month, 1..31
     axis: () => ({ positions: MONTH_DAYS, labels: MONTH_DAYS.map(String) }),
   },
-} satisfies Record<string, YoyUnitSpec>;
-
-type YoyUnit = keyof typeof YOY_UNITS;
+} satisfies Record<YoyUnitKey, YoyUnitSpec>;
 
 /** The Across-Years view's value pickers — the unit selector sits beside them. */
 const YOY_STRIP = stripsIn('yoy-controls', YOY_UNITS);
@@ -2018,7 +1995,7 @@ const YOY_SUMMARY: { label: string; prefix: string; key: string }[] = [
 ];
 
 // The current comparison unit; its value pickers are rebuilt when it changes.
-let yoyUnit: YoyUnit = 'month';
+let yoyUnit: YoyUnitKey = 'month';
 
 const YOY_VIEW = view<YoyMetric>('yoy', {
   specs: YOY_METRICS,
@@ -2031,7 +2008,7 @@ const YOY_VIEW = view<YoyMetric>('yoy', {
 /** Rebuild the unit selector and the value pickers it implies. */
 function renderYoyControls(): void {
   const unitSel = mkSelect(YOY_STRIP.options, yoyUnit, () => {
-    yoyUnit = unitSel.value as YoyUnit;
+    yoyUnit = unitSel.value as YoyUnitKey;
     renderYoyControls();
     loadYoy();
   });
@@ -2049,7 +2026,7 @@ function yoyUrl(): string {
 
 async function loadYoy(): Promise<void> {
   const status = el('yoy-status');
-  const data = await loadInto<YoyResponse>(status, yoyUrl(), 'Loading…', 'Could not load');
+  const data = await loadInto<AcrossYearsReply>(status, yoyUrl(), 'Loading…', 'Could not load');
   if (!data) return;
 
   el('yoy-heading').textContent = `${data.label} across years`;
@@ -2101,7 +2078,7 @@ async function loadYoy(): Promise<void> {
   renderYoySummary(data);
 }
 
-function renderYoySummary(data: YoyResponse): void {
+function renderYoySummary(data: AcrossYearsReply): void {
   renderDeltaTable(YOY_VIEW.table, {
     // Each year's head says how many of the period's days its figures cover.
     columns: data.years.map(yearHead),
@@ -2109,7 +2086,10 @@ function renderYoySummary(data: YoyResponse): void {
     label: m => m.label,
     // A row names the stat card it reads, so both the accessor and the unit come
     // from STAT_CARDS rather than being restated here.
-    values: m => data.years.map(y => CARD_BY_PREFIX[m.prefix].pick(y.stats)[m.key]),
+    // A year with no rows for the period is left out of the reply, so these are
+    // always there; the reply says `stats` is nullable all the same, and a blank
+    // cell is what the table already shows for a figure it hasn't got.
+    values: m => data.years.map(y => (y.stats ? CARD_BY_PREFIX[m.prefix].pick(y.stats)[m.key] : null)),
     format: m => v => statText(m.prefix, m.key, v),
     // With ≥2 years, a trailing column shows the change from the earliest to the
     // latest year — the headline "how did this period differ" number.
@@ -2129,8 +2109,6 @@ function renderYoySummary(data: YoyResponse): void {
 // reads at a glance. Independent of the unit pickers above it: it always spans
 // whole years. A year whose record starts mid-year accumulates from its first
 // recorded day, and the note under the heading says so.
-interface YtdYear { year: number; days: { md: string; total: number }[] }
-
 const YTD_CHART = 'ytd-chart';
 /**
  * The line under the heading, which doubles as this chart's status line. Named
@@ -2172,7 +2150,7 @@ async function loadYtd(): Promise<void> {
   // The note under the heading doubles as this chart's status line, the way
   // both overlays already report through one of their own.
   const note = el(YTD_NOTE);
-  const data = await loadInto<{ years: YtdYear[] }>(
+  const data = await loadInto<PrecipYtdReply>(
     note, '/api/precip-ytd', 'Loading…', 'Could not load',
   );
   if (!data) return;
