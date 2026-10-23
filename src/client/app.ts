@@ -1721,13 +1721,33 @@ function renderDeltaTable<T>(
 
 // The page has three mutually-exclusive views, each `<name>-view` in the markup:
 // the dashboard, plus two overlays reached from their own navbar button. One
-// entry per overlay drives the button's active state, its toggle handler and
-// what showing it loads — they used to be spelled out in four places (three
-// `classList.toggle` lines, two button syncs, two `if (v === …)` loads and two
-// click handlers) that all had to name the same view.
+// entry per overlay drives its navbar button — the markup, the active state
+// and the toggle handler — and what showing it loads. They used to be spelled
+// out in four places (three `classList.toggle` lines, two button syncs, two
+// `if (v === …)` loads and two click handlers) that all had to name the same
+// view.
+//
+// The button's own label, colour and hover text sit here too. They were the
+// last copy of this list left in index.html, where each overlay spelled out an
+// id that had to match `overlayBtn`'s template, beside the label and the
+// `btn-outline-*` class — so a third overlay meant a hand-written button whose
+// id nothing checked, which is exactly what the period tabs, the chart cards
+// and the stat cards all moved out of the markup to avoid.
 const OVERLAYS = [
-  { name: 'compare', show: () => loadCompare() },
-  { name: 'yoy', show: () => { renderYoyControls(); loadYoy(); loadYtd(); } },
+  {
+    name: 'compare',
+    label: '🌍 Compare vs Baar',
+    hint: 'Compare my data against a public weather service',
+    cls: 'btn-outline-warning',
+    show: () => loadCompare(),
+  },
+  {
+    name: 'yoy',
+    label: '📅 Across Years',
+    hint: 'Compare the same day, week or month across years',
+    cls: 'btn-outline-success',
+    show: () => { renderYoyControls(); loadYoy(); loadYtd(); },
+  },
 ] as const;
 
 /** An overlay's navbar button — named after the overlay, as its view already is. */
@@ -1750,10 +1770,29 @@ function showView(v: ViewName): void {
   }
 }
 
-// Each overlay button toggles its own view, falling back to the dashboard.
-for (const o of OVERLAYS) {
-  overlayBtn(o.name).addEventListener('click', () =>
-    showView(currentView === o.name ? 'dashboard' : o.name));
+/**
+ * Build the navbar's overlay buttons. Each toggles its own view, falling back
+ * to the dashboard — the handler used to be attached in a second walk of
+ * OVERLAYS, to buttons the markup had already declared.
+ *
+ * `showView` keeps their active state in step, because it is also reached from
+ * the period tabs and from a calendar day, so a button cannot sync only on its
+ * own click the way `renderButtonGroup`'s do.
+ */
+function renderOverlayButtons(): void {
+  const box = emptyEl('overlay-buttons');
+  for (const o of OVERLAYS) {
+    const btn = mkEl('button', {
+      type: 'button',
+      id: `btn-${o.name}`,
+      className: `btn btn-sm ${o.cls}`,
+      title: o.hint,
+      textContent: o.label,
+    });
+    btn.addEventListener('click', () =>
+      showView(currentView === o.name ? 'dashboard' : o.name));
+    box.append(btn);
+  }
 }
 
 /**
@@ -2196,6 +2235,7 @@ async function loadYtd(): Promise<void> {
 // --- Init ---
 (async () => {
   renderPeriodTabs();
+  renderOverlayButtons();
   renderStatCards();
   // Each view builds its own shell: chart cards, then its table card. Each
   // table's header is filled alongside its rows, by whatever renders them.
