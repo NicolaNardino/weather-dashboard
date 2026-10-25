@@ -625,13 +625,22 @@ const mutedLabel = (text: string) =>
   mkEl('span', { className: 'text-muted small', textContent: text });
 
 /**
- * Fill a `btn-group` with one button per item and keep their pressed state in
- * step with whatever `active` reads. Both button groups on the page — the
- * period tabs and the chart toggles — built their buttons the same way and then
- * re-stated the active class in their own way: the tabs by re-rendering the
- * whole group on every click, the toggles through a per-button `sync` closure.
- * Re-reading `active` for every button after a click covers both, so a group
- * can't be left showing a stale selection.
+ * Fill a box with one button per item and keep their pressed state in step with
+ * whatever `active` reads. All three button groups on the page — the period
+ * tabs, the chart toggles and the navbar's overlay buttons — built their
+ * buttons the same way and then re-stated the active class in their own way:
+ * the tabs by re-rendering the whole group on every click, the toggles through
+ * a per-button `sync` closure, and the overlays by having `showView` reach for
+ * each button by id and toggle the class itself. Re-reading `active` for every
+ * button after a click covers all three, so a group can't be left showing a
+ * stale selection.
+ *
+ * It hands `sync` back, because the overlays are the one group whose selection
+ * also changes from outside it — a period tab or a calendar day returns to the
+ * dashboard — so clicking a button of the group is not the only moment its
+ * state can go stale. That is what kept them out of here, and what a returned
+ * `sync` is: the same re-read, asked for by the one other place that changes
+ * the answer.
  */
 function renderButtonGroup<T>(
   id: string,
@@ -640,15 +649,17 @@ function renderButtonGroup<T>(
     label: (item: T) => string;
     active: (item: T) => boolean;
     onClick: (item: T) => void;
+    /** This button's own classes, where they differ from the group default. */
+    className?: (item: T) => string;
     /** Extra per-button setup, e.g. the `data-period` the harness clicks. */
     each?: (item: T, btn: HTMLButtonElement) => void;
   },
-): void {
+): () => void {
   const box = emptyEl(id);
   const buttons = items.map(item => {
     const btn = mkEl('button', {
       type: 'button',
-      className: 'btn btn-outline-secondary',
+      className: o.className?.(item) ?? 'btn btn-outline-secondary',
       textContent: o.label(item),
     });
     o.each?.(item, btn);
@@ -665,6 +676,7 @@ function renderButtonGroup<T>(
     }
   }
   sync();
+  return sync;
 }
 
 /**
@@ -1750,24 +1762,26 @@ const OVERLAYS = [
   },
 ] as const;
 
-/** An overlay's navbar button — named after the overlay, as its view already is. */
-const overlayBtn = (name: string) => el(`btn-${name}`);
-
 type ViewName = 'dashboard' | (typeof OVERLAYS)[number]['name'];
 let currentView: ViewName = 'dashboard';
+
+/** Re-read the overlay buttons' pressed state; set by `renderOverlayButtons`. */
+let syncOverlayButtons: () => void = () => {};
 
 function showView(v: ViewName): void {
   currentView = v;
   el('dashboard-view').classList.toggle('d-none', v !== 'dashboard');
-  // One pass per overlay: hide or show its view, sync its button, and load it
-  // if it is the one being shown. These were three separate walks of OVERLAYS —
-  // one of them over a throwaway array rebuilt on every switch.
+  // One pass per overlay: hide or show its view, and load it if it is the one
+  // being shown. These were separate walks of OVERLAYS — one of them over a
+  // throwaway array rebuilt on every switch.
   for (const o of OVERLAYS) {
     const on = o.name === v;
     el(`${o.name}-view`).classList.toggle('d-none', !on);
-    overlayBtn(o.name).classList.toggle('active', on);
     if (on) o.show();
   }
+  // The buttons are the one part of this a click on them does not settle: the
+  // period tabs and a calendar day come here too.
+  syncOverlayButtons();
 }
 
 /**
@@ -1775,24 +1789,21 @@ function showView(v: ViewName): void {
  * to the dashboard — the handler used to be attached in a second walk of
  * OVERLAYS, to buttons the markup had already declared.
  *
- * `showView` keeps their active state in step, because it is also reached from
- * the period tabs and from a calendar day, so a button cannot sync only on its
- * own click the way `renderButtonGroup`'s do.
+ * They are a button group like the period tabs and the chart toggles, and now
+ * say so: what kept them hand-built was that `showView` is reached from those
+ * tabs and from a calendar day as well, so their pressed state had to be
+ * settled from outside the group — which is what the `sync` it hands back is.
  */
 function renderOverlayButtons(): void {
-  const box = emptyEl('overlay-buttons');
-  for (const o of OVERLAYS) {
-    const btn = mkEl('button', {
-      type: 'button',
-      id: `btn-${o.name}`,
-      className: `btn btn-sm ${o.cls}`,
-      title: o.hint,
-      textContent: o.label,
-    });
-    btn.addEventListener('click', () =>
-      showView(currentView === o.name ? 'dashboard' : o.name));
-    box.append(btn);
-  }
+  syncOverlayButtons = renderButtonGroup('overlay-buttons', OVERLAYS, {
+    label: o => o.label,
+    active: o => o.name === currentView,
+    className: o => `btn btn-sm ${o.cls}`,
+    onClick: o => showView(currentView === o.name ? 'dashboard' : o.name),
+    // The id is what the verification harness clicks; the hover text is the
+    // button's own, and neither is anything the group itself knows about.
+    each: (o, btn) => { btn.id = `btn-${o.name}`; btn.title = o.hint; },
+  });
 }
 
 /**
